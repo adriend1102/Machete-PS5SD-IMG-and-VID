@@ -971,6 +971,10 @@
           </div>
         </div>
         <label class="opt" id="init-ref-row" style="display:none"><input type="checkbox" id="init-ref" checked> Edit by the prompt: say what to change, the rest of the picture stays</label>
+        <div class="row" id="ref-boost-row" style="display:none">
+          <div><label for="ref-boost">Ref Boost</label><input id="ref-boost" type="number" min="0.01" max="100" step="0.1" value="1.0" aria-label="Reference boost"></div>
+          <div></div>
+        </div>
         <div class="row" id="init-str-row">
           <div>
             <div class="lbl">Strength (how much changes)</div>
@@ -1973,6 +1977,7 @@
   // Shared by the Create tab (the model in use) and the Models tab (rows, tags, catalog cards).
   // The family of a model, guessed from the names (then the files) of it and its base file.
   function familyWord(s) {
+    if (/krea\s*2|krea2/.test(s)) return 'Krea2';
     if (/flux/.test(s)) return 'FLUX';
     if (/z[-_ ]?image/.test(s)) return 'Z-Image';
     if (/wan/.test(s)) return 'Wan';
@@ -2022,6 +2027,7 @@
     return {
       w: size8('w', 512), h: size8('h', 512),
       steps: Math.round(num('steps', 20, 1, 150)), cfg: num('cfg', 7, 0, 30),
+      refBoost: num('ref-boost', 1, 0.01, 100),
       sampler: $('sampler').value, scheduler: $('scheduler').value,
       clip: clipSkipShown() ? clipValue() : -1,
       shift: parseFloat($('shift').value) > 0 ? Math.min(20, parseFloat($('shift').value)) : 0,
@@ -2080,6 +2086,7 @@
     if (o.h) $('h').value = o.h;
     if (o.steps) $('steps').value = o.steps;
     if (o.cfg !== undefined && o.cfg !== null) $('cfg').value = o.cfg;
+    $('ref-boost').value = o.refBoost !== undefined && o.refBoost !== null ? o.refBoost : (st.preset && st.preset.refBoost) || 1.0;
     setSelect('sampler', o.sampler || 'default');
     setSelect('scheduler', o.scheduler || 'default');
     $('clipskip').value = o.clip > 0 ? o.clip : '';
@@ -2183,6 +2190,10 @@
     st.mkey = key;
     st.mid = entry ? entry.id : '';
     st.preset = presetFor(name, entry);
+    var modelNames = ((entry && entry.name) || '') + ' ' + ((entry && entry.id) || '') + ' ' + ((entry && entry.files) || []).join(' ');
+    st.preset.refBoost = /^Krea2/.test(familyOf(entry, entry && entry.base ? findModel(entry.base) : null))
+      ? (/big\s*love.*krea\s*2|krea\s*2.*big\s*love/i.test(modelNames) ? 4.0 : 1.0)
+      : 1.0;
     text($('presetnote'), presetNote(st.preset));
     st.cnModel = entry && entry.control_net ? entry.control_net : '';
     drawStarters(entry);
@@ -3193,6 +3204,7 @@
     if (loraBody(p).length) body.lora = loraBody(p);
     if (p.req && p.req.ref) {
       body.ref_images = [p.req.init];
+      if (/^Krea2/.test(loadedFamily())) body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
       body.width = p.req.w;
       body.height = p.req.h;
     } else if (p.req) {
@@ -7021,9 +7033,8 @@
     r.readAsDataURL(f);
   }
 
-  // FLUX.2 edits by the prompt: the start image goes as a reference (ref_images), with no strength and no
-  // mask. sd.cpp ignores references for other families, so the choice shows only for FLUX.2.
-  function refCapable() { return /^FLUX\.2/.test(loadedFamily()); }
+  // FLUX.2 and Krea2 edits by the prompt use the start image as a reference.
+  function refCapable() { return /^FLUX\.2|^Krea2/.test(loadedFamily()); }
   function refEdit() { return !!st.init && refCapable() && $('init-ref').checked; }
 
   function drawInit() {
@@ -7047,6 +7058,7 @@
         : 'no mask: the whole image changes'));
       text($('init-mask'), i.mask ? 'Edit the mask' : 'Paint a mask');
       show('init-ref-row', refCapable(), 'flex');
+      show('ref-boost-row', /^Krea2/.test(loadedFamily()) && ref, 'flex');
       show('init-str-row', !ref, 'flex');
       show('init-mask', !ref, 'inline-block');
       show('init-crop-row', !!i.mask && !ref, 'flex');
@@ -8611,6 +8623,7 @@
     $('init-mask').onclick = openMask;
     $('init-crop').onchange = drawInit;
     $('init-ref').onchange = drawInit;
+    $('ref-boost').onchange = persist;
     $('init-str').onchange = persist;
     $('init-str-').onclick = function () { stepper('init-str', -0.05, 0.05, 1, 2); };
     $('init-str+').onclick = function () { stepper('init-str', 0.05, 0.05, 1, 2); };

@@ -3,6 +3,7 @@
     return {
       w: size8('w', 512), h: size8('h', 512),
       steps: Math.round(num('steps', 20, 1, 150)), cfg: num('cfg', 7, 0, 30),
+      refBoost: num('ref-boost', 1, 0.01, 100),
       sampler: $('sampler').value, scheduler: $('scheduler').value,
       clip: clipSkipShown() ? clipValue() : -1,
       shift: parseFloat($('shift').value) > 0 ? Math.min(20, parseFloat($('shift').value)) : 0,
@@ -61,6 +62,7 @@
     if (o.h) $('h').value = o.h;
     if (o.steps) $('steps').value = o.steps;
     if (o.cfg !== undefined && o.cfg !== null) $('cfg').value = o.cfg;
+    $('ref-boost').value = o.refBoost !== undefined && o.refBoost !== null ? o.refBoost : (st.preset && st.preset.refBoost) || 1.0;
     setSelect('sampler', o.sampler || 'default');
     setSelect('scheduler', o.scheduler || 'default');
     $('clipskip').value = o.clip > 0 ? o.clip : '';
@@ -164,6 +166,10 @@
     st.mkey = key;
     st.mid = entry ? entry.id : '';
     st.preset = presetFor(name, entry);
+    var modelNames = ((entry && entry.name) || '') + ' ' + ((entry && entry.id) || '') + ' ' + ((entry && entry.files) || []).join(' ');
+    st.preset.refBoost = /^Krea2/.test(familyOf(entry, entry && entry.base ? findModel(entry.base) : null))
+      ? (/big\s*love.*krea\s*2|krea\s*2.*big\s*love/i.test(modelNames) ? 4.0 : 1.0)
+      : 1.0;
     text($('presetnote'), presetNote(st.preset));
     st.cnModel = entry && entry.control_net ? entry.control_net : '';
     drawStarters(entry);

@@ -116,6 +116,7 @@
     if (loraBody(p).length) body.lora = loraBody(p);
     if (p.req && p.req.ref) {
       body.ref_images = [p.req.init];
+      if (/^Krea2/.test(loadedFamily())) body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
       body.width = p.req.w;
       body.height = p.req.h;
     } else if (p.req) {

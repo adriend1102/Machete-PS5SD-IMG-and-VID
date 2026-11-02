@@ -61,9 +61,8 @@
     r.readAsDataURL(f);
   }
 
-  // FLUX.2 edits by the prompt: the start image goes as a reference (ref_images), with no strength and no
-  // mask. sd.cpp ignores references for other families, so the choice shows only for FLUX.2.
-  function refCapable() { return /^FLUX\.2/.test(loadedFamily()); }
+  // FLUX.2 and Krea2 edits by the prompt use the start image as a reference.
+  function refCapable() { return /^FLUX\.2|^Krea2/.test(loadedFamily()); }
   function refEdit() { return !!st.init && refCapable() && $('init-ref').checked; }
 
   function drawInit() {
@@ -87,6 +86,7 @@
         : 'no mask: the whole image changes'));
       text($('init-mask'), i.mask ? 'Edit the mask' : 'Paint a mask');
       show('init-ref-row', refCapable(), 'flex');
+      show('ref-boost-row', /^Krea2/.test(loadedFamily()) && ref, 'flex');
       show('init-str-row', !ref, 'flex');
       show('init-mask', !ref, 'inline-block');
       show('init-crop-row', !!i.mask && !ref, 'flex');
