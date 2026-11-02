@@ -1,19 +1,15 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Wed, 21 Oct 2026 15:17:18 +0200
-Subject: [PATCH] server: request defaults the application sets at run time
- (sd_server_set_request_defaults)
+From a8e849427ad9f033bd7908a65cda5e894e80aa31 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:32:26 +0100
+Subject: [PATCH 17/29] PS5 integration:
+ 0063-server-request-defaults-at-run-time
 
----
- examples/server/routes_openai.cpp |  9 ++---
- examples/server/routes_sdapi.cpp  | 11 +++---
- examples/server/routes_sdcpp.cpp  |  6 ++--
- examples/server/runtime.cpp       | 56 +++++++++++++++++++++++++++++++
- examples/server/runtime.h         |  7 ++++
- 5 files changed, 77 insertions(+), 12 deletions(-)
+# Conflicts:
+#	examples/server/routes_openai.cpp
+#	examples/server/runtime.h
 
 diff --git a/examples/server/routes_openai.cpp b/examples/server/routes_openai.cpp
-index 69e7e9b..fea7b41 100644
+index 9dd4549..bb5968d 100644
 --- a/examples/server/routes_openai.cpp
 +++ b/examples/server/routes_openai.cpp
 @@ -27,6 +27,7 @@ static bool build_openai_generation_request(const httplib::Request& req,
@@ -29,9 +25,9 @@ index 69e7e9b..fea7b41 100644
      std::string output_format = j.value("output_format", "png");
      int output_compression    = j.value("output_compression", 100);
 -    int width                 = runtime.default_gen_params->width > 0 ? runtime.default_gen_params->width : 512;
--    int height                = runtime.default_gen_params->width > 0 ? runtime.default_gen_params->height : 512;
+-    int height                = runtime.default_gen_params->height > 0 ? runtime.default_gen_params->height : 512;
 +    int width                 = defaults.width > 0 ? defaults.width : 512;
-+    int height                = defaults.width > 0 ? defaults.height : 512;
++    int height                = defaults.height > 0 ? defaults.height : 512;
      if (!size.empty()) {
          auto pos = size.find('x');
          if (pos != std::string::npos) {
@@ -54,10 +50,10 @@ index 69e7e9b..fea7b41 100644
          return false;
      }
 diff --git a/examples/server/routes_sdapi.cpp b/examples/server/routes_sdapi.cpp
-index 3667772..5b758a7 100644
+index 42f012b..3846af4 100644
 --- a/examples/server/routes_sdapi.cpp
 +++ b/examples/server/routes_sdapi.cpp
-@@ -87,16 +87,17 @@ static bool build_sdapi_img_gen_request(const json& j,
+@@ -287,16 +287,17 @@ static bool build_sdapi_img_gen_request(const json& j,
                                          bool img2img,
                                          ImgGenJobRequest& request,
                                          std::string& error_message) {
@@ -79,7 +75,7 @@ index 3667772..5b758a7 100644
      int64_t seed                = j.value("seed", -1);
      int batch_size              = j.value("batch_size", 1);
      int clip_skip               = j.value("clip_skip", -1);
-@@ -113,7 +114,7 @@ static bool build_sdapi_img_gen_request(const json& j,
+@@ -313,7 +314,7 @@ static bool build_sdapi_img_gen_request(const json& j,
          return false;
      }
  
@@ -89,10 +85,10 @@ index 3667772..5b758a7 100644
      request.gen_params.prompt                         = prompt;
      request.gen_params.negative_prompt                = negative_prompt;
 diff --git a/examples/server/routes_sdcpp.cpp b/examples/server/routes_sdcpp.cpp
-index 8fdb80f..2059d42 100644
+index a19d233..6134882 100644
 --- a/examples/server/routes_sdcpp.cpp
 +++ b/examples/server/routes_sdcpp.cpp
-@@ -239,7 +239,7 @@ static json make_capabilities_json(ServerRuntime& runtime) {
+@@ -247,7 +247,7 @@ static json make_capabilities_json(ServerRuntime& runtime) {
      refresh_upscaler_cache(runtime);
  
      AsyncJobManager& manager  = *runtime.async_job_manager;
@@ -101,7 +97,7 @@ index 8fdb80f..2059d42 100644
      const fs::path model_path = resolve_display_model_path(runtime);
      const bool supports_img   = runtime_supports_generation_mode(runtime, IMG_GEN);
      const bool supports_vid   = runtime_supports_generation_mode(runtime, VID_GEN);
-@@ -416,7 +416,7 @@ static bool parse_img_gen_request(const json& body,
+@@ -445,7 +445,7 @@ static bool parse_img_gen_request(const json& body,
                                    ServerRuntime& runtime,
                                    ImgGenJobRequest& request,
                                    std::string& error_message) {
@@ -110,7 +106,7 @@ index 8fdb80f..2059d42 100644
  
      refresh_lora_cache(runtime);
      if (!request.gen_params.from_json_str(body.dump(), [&](const std::string& path) {
-@@ -445,7 +445,7 @@ static bool parse_vid_gen_request(const json& body,
+@@ -474,7 +474,7 @@ static bool parse_vid_gen_request(const json& body,
                                    ServerRuntime& runtime,
                                    VidGenJobRequest& request,
                                    std::string& error_message) {
@@ -120,10 +116,10 @@ index 8fdb80f..2059d42 100644
      refresh_lora_cache(runtime);
      if (!request.gen_params.from_json_str(body.dump(), [&](const std::string& path) {
 diff --git a/examples/server/runtime.cpp b/examples/server/runtime.cpp
-index b17cd6c..460a42f 100644
+index f10119d..952c2c3 100644
 --- a/examples/server/runtime.cpp
 +++ b/examples/server/runtime.cpp
-@@ -421,3 +421,59 @@ int64_t unix_timestamp_now() {
+@@ -591,3 +591,59 @@ int64_t unix_timestamp_now_ms() {
                 std::chrono::system_clock::now().time_since_epoch())
          .count();
  }
@@ -184,20 +180,18 @@ index b17cd6c..460a42f 100644
 +    return params;
 +}
 diff --git a/examples/server/runtime.h b/examples/server/runtime.h
-index 7946f3f..39e4ee5 100644
+index 0c43045..34e04b2 100644
 --- a/examples/server/runtime.h
 +++ b/examples/server/runtime.h
-@@ -108,3 +108,10 @@ void refresh_lora_cache(ServerRuntime& rt);
+@@ -133,6 +133,8 @@ void refresh_lora_cache(ServerRuntime& rt);
  std::string get_lora_full_path(ServerRuntime& rt, const std::string& path);
  void refresh_upscaler_cache(ServerRuntime& rt);
- int64_t unix_timestamp_now();
-+
-+// PS5SD: the embedding application sets the defaults of API requests at run time (the settings
-+// of a preset). A value of -1 (steps, width, height), a negative cfg, or a NULL or empty name
-+// means "not set": the command line's value stays.
+ int64_t unix_timestamp_now_ms();
 +extern "C" void sd_server_set_request_defaults(int steps, float cfg, const char* sampler, const char* scheduler, int width, int height);
-+// A copy of the command line's defaults with the run-time ones (sd_server_set_request_defaults) applied.
 +SDGenerationParams request_defaults(const ServerRuntime& runtime);
+ bool apply_server_adetailer(ServerRuntime& runtime,
+                             const ImgGenJobRequest& request,
+                             const sd_img_gen_params_t& params,
 -- 
-2.56.0
+2.39.1.windows.1
 

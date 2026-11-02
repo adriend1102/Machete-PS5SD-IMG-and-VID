@@ -1,36 +1,28 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Thu, 22 Oct 2026 12:00:00 +0200
-Subject: [PATCH] server: a failed generation says why
+From 3ff318f2ae679a6a458cc59c994634b8f5eca361 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:32:55 +0100
+Subject: [PATCH 19/29] PS5 integration: 0065-server-failure-reasons
 
----
- examples/server/async_jobs.cpp    |   4 +-
- examples/server/gallery.cpp       |   2 +
- examples/server/main.cpp          |   3 +
- examples/server/routes_openai.cpp |   2 +-
- examples/server/routes_sdapi.cpp  |   3 +-
- examples/server/routes_sdcpp.cpp  |   2 +
- examples/server/server_activity.h |  22 ++++++-
- examples/server/server_hooks.cpp  | 106 ++++++++++++++++++++++++++++++
- examples/server/server_hooks.h    |   8 ++-
- 9 files changed, 144 insertions(+), 8 deletions(-)
+# Conflicts:
+#	examples/server/async_jobs.cpp
+#	examples/server/routes_sdcpp.cpp
 
 diff --git a/examples/server/async_jobs.cpp b/examples/server/async_jobs.cpp
-index 148ec5e..050b82d 100644
+index 358d010..c432019 100644
 --- a/examples/server/async_jobs.cpp
 +++ b/examples/server/async_jobs.cpp
-@@ -258,7 +258,7 @@ bool execute_img_gen_job(ServerRuntime& runtime,
+@@ -305,7 +305,7 @@ bool execute_img_gen_job(ServerRuntime& runtime,
      const std::vector<std::string> saved = save_output_images(*runtime.svr_params, results);
      activity.finish(num_results > 0, saved_paths(saved));
-     if (num_results <= 0) {
+     if (job.cancel_requested.load() || num_results <= 0) {
 -        error_message = "generate_image returned no results";
 +        error_message = sd_server_failure_reason("generate_image returned no results");
          return false;
      }
  
-@@ -334,7 +334,7 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
+@@ -386,7 +386,7 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
      num_results = results.count();
-     if (num_results <= 0) {
+     if (job.cancel_requested.load() || num_results <= 0) {
          free_sd_audio(generated_audio);
 -        error_message = "generate_video returned no results";
 +        error_message = sd_server_failure_reason("generate_video returned no results");
@@ -58,18 +50,18 @@ index 030aebb..3ba106e 100644
      return async_job;
  }
 diff --git a/examples/server/main.cpp b/examples/server/main.cpp
-index 38b55a2..1519810 100644
+index efea289..a5c9cef 100644
 --- a/examples/server/main.cpp
 +++ b/examples/server/main.cpp
-@@ -16,6 +16,7 @@
- #include "common/common.h"
+@@ -17,6 +17,7 @@
  #include "common/resource_owners.hpp"
+ #include "model_catalog.h"
  #include "routes.h"
 +#include "server_activity.h"
  #include "server_hooks.h"
  #include "runtime.h"
  
-@@ -89,6 +90,8 @@ static void sd_progress_cb(int step, int steps, float secs, void*) {
+@@ -94,6 +95,8 @@ static void sd_progress_cb(int step, int steps, float secs, void*) {
  }
  
  void sd_log_cb(enum sd_log_level_t level, const char* log, void* data) {
@@ -79,10 +71,10 @@ index 38b55a2..1519810 100644
      log_print(level, log, svr_params->log_level, svr_params->color);
  }
 diff --git a/examples/server/routes_openai.cpp b/examples/server/routes_openai.cpp
-index fea7b41..f22c2c1 100644
+index bb5968d..2e13d75 100644
 --- a/examples/server/routes_openai.cpp
 +++ b/examples/server/routes_openai.cpp
-@@ -250,7 +250,7 @@ static bool execute_sync_img_gen_request(ServerRuntime& runtime,
+@@ -243,7 +243,7 @@ static bool execute_sync_img_gen_request(ServerRuntime& runtime,
      activity.finish(!results.empty(), saved_paths(saved));
  
      if (results.empty()) {
@@ -92,10 +84,10 @@ index fea7b41..f22c2c1 100644
      }
      return true;
 diff --git a/examples/server/routes_sdapi.cpp b/examples/server/routes_sdapi.cpp
-index 5b758a7..f207ef7 100644
+index 3846af4..7489c5e 100644
 --- a/examples/server/routes_sdapi.cpp
 +++ b/examples/server/routes_sdapi.cpp
-@@ -433,7 +433,8 @@ void register_sdapi_endpoints(httplib::Server& svr, ServerRuntime& rt) {
+@@ -632,7 +632,8 @@ void register_sdapi_endpoints(httplib::Server& svr, ServerRuntime& rt) {
  
              if (results.empty()) {
                  res.status = 500;
@@ -106,25 +98,28 @@ index 5b758a7..f207ef7 100644
              }
  
 diff --git a/examples/server/routes_sdcpp.cpp b/examples/server/routes_sdcpp.cpp
-index 2059d42..8d16b8c 100644
+index 6134882..5775e35 100644
 --- a/examples/server/routes_sdcpp.cpp
 +++ b/examples/server/routes_sdcpp.cpp
-@@ -10,6 +10,7 @@
- #include "common/media_io.h"
+@@ -11,6 +11,7 @@
  #include "common/resource_owners.hpp"
+ #include "model_catalog.h"
  #include "gallery.h"
 +#include "server_activity.h"
  #include "server_hooks.h"
  
  namespace fs = std::filesystem;
-@@ -849,6 +850,7 @@ void register_sdcpp_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
+@@ -880,7 +881,9 @@ void register_sdcpp_api_endpoints(httplib::Server& svr, ServerRuntime& rt) {
          // worker marks it cancelled once generate_image() has returned.
          if (job.status == AsyncJobStatus::Generating) {
-             job.cancel_requested = true;
+             job.cancel_requested.store(true);
+-            res.status = 200;
 +            sd_server_failure_log_cancelled();
-             sd_cancel_generation(runtime->sd_ctx, SD_CANCEL_ALL);
-             res.status = 202;
++            sd_cancel_generation(runtime->sd_ctx, SD_CANCEL_ALL);
++            res.status = 202;
              res.set_content(make_async_job_json(manager, job).dump(), "application/json");
+             return;
+         }
 diff --git a/examples/server/server_activity.h b/examples/server/server_activity.h
 index e344cf6..4926849 100644
 --- a/examples/server/server_activity.h
@@ -313,5 +308,5 @@ index e2628f3..1e48b59 100644
  
  // The application's own routes: GET, POST and DELETE on /ps5sd/v1/app/<path>
 -- 
-2.56.0.windows.2
+2.39.1.windows.1
 

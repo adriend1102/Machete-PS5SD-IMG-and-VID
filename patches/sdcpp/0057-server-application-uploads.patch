@@ -1,14 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Tue, 20 Oct 2026 19:15:34 +0200
-Subject: [PATCH] server: PUT /ps5sd/v1/app/<path> streams the body to the
- application (sd_app_upload)
+From d2ac9065d3ffdc746b4a3bf3426e02f3e49e65a1 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:26:13 +0100
+Subject: [PATCH 11/29] PS5 integration: 0057-server-application-uploads
 
----
- examples/server/gallery.cpp      | 41 ++++++++++++++++++++++++++++++++
- examples/server/server_hooks.cpp |  3 +++
- examples/server/server_hooks.h   | 13 ++++++++++
- 3 files changed, 57 insertions(+)
 
 diff --git a/examples/server/gallery.cpp b/examples/server/gallery.cpp
 index 2730953..bdbf164 100644
@@ -107,5 +101,5 @@ index fee9aa1..addefb6 100644
  }
  #endif
 -- 
-2.56.0.windows.2
+2.39.1.windows.1
 

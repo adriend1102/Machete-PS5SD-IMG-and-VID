@@ -1,0 +1,64 @@
+From 295e549400b9dedddee4147d74bc37f217721648 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:38:04 +0100
+Subject: [PATCH 29/29] PS5 integration: retry out-of-memory with current
+ result API
+
+
+diff --git a/examples/server/async_jobs.cpp b/examples/server/async_jobs.cpp
+index babf8f5..3b6dbd6 100644
+--- a/examples/server/async_jobs.cpp
++++ b/examples/server/async_jobs.cpp
+@@ -364,9 +364,14 @@ bool execute_img_gen_job(ServerRuntime& runtime,
+             JobCancellationMonitor cancellation(runtime.sd_ctx, job);
+             activity.begin();
+             set_preview_callback(job);
+-            sd_image_generation_result_t* generated = nullptr;
+-            generate_image(runtime.sd_ctx, &params, &generated);
+-            results.adopt(generated, runtime.ctx_params->lora_model_dir);
++            for (int attempt = 1;; ++attempt) {
++                sd_image_generation_result_t* generated = nullptr;
++                generate_image(runtime.sd_ctx, &params, &generated);
++                results.adopt(generated, runtime.ctx_params->lora_model_dir);
++                if (!results.empty() || !run_once_more_after(&manager, job, attempt)) {
++                    break;
++                }
++            }
+             clear_preview_callback();
+             if (job.cancel_requested.load()) {
+                 return false;
+@@ -452,15 +457,22 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
+         JobCancellationMonitor cancellation(runtime.sd_ctx, job);
+         activity.begin();
+         set_preview_callback(job);
+-        sd_video_generation_result_t* generated = nullptr;
+-        if (generate_video(runtime.sd_ctx, &params, &generated)) {
+-            output_fps       = generated->fps;
+-            generated_audio  = generated->audio;
+-            generated->audio = nullptr;
+-            results.adopt_video(generated, runtime.ctx_params->lora_model_dir);
+-            output_info = json::parse(results.generation_info(0));
+-            if (job.vid_gen.gen_params.embed_image_metadata)
+-                str_params = results.generation_info(0);
++        for (int attempt = 1;; ++attempt) {
++            sd_video_generation_result_t* generated = nullptr;
++            if (generate_video(runtime.sd_ctx, &params, &generated)) {
++                output_fps       = generated->fps;
++                generated_audio  = generated->audio;
++                generated->audio = nullptr;
++                results.adopt_video(generated, runtime.ctx_params->lora_model_dir);
++                output_info = json::parse(results.generation_info(0));
++                if (job.vid_gen.gen_params.embed_image_metadata)
++                    str_params = results.generation_info(0);
++            }
++            if (!results.empty() || !run_once_more_after(runtime.async_job_manager, job, attempt)) {
++                break;
++            }
++            free_sd_audio(generated_audio);
++            generated_audio = nullptr;
+         }
+         clear_preview_callback();
+     }
+-- 
+2.39.1.windows.1
+

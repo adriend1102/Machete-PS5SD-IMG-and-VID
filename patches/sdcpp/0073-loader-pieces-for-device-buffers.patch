@@ -1,22 +1,14 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Sat, 24 Oct 2026 12:00:00 +0200
-Subject: [PATCH] loader: tensors for device buffers in 8 MB pieces
+From a4e1b7e85459db352337c5917d09b787e4b359a8 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:27:22 +0100
+Subject: [PATCH 27/29] PS5 integration: 0073-loader-pieces-for-device-buffers
 
-A tensor for a device buffer was read whole into the loader thread's
-read_buffer and then copied over, so every thread kept a buffer as large as
-the largest tensor it had read: 85 MB for a layer of FLUX.2 Klein 9B, over
-half a GB for all threads. On the PS5 that CPU heap comes out of the pool
-the model fills, and a run that loaded weights again ran out of memory there
-(four times in a row right after a start with Klein 9B and a LoRA). A tensor
-with nothing to convert now goes over in pieces of at most 8 MB, through a
-buffer of its own.
----
+
 diff --git a/src/model_loader.cpp b/src/model_loader.cpp
-index 6761d3e..950fecb 100644
+index 42a0d05..c965837 100644
 --- a/src/model_loader.cpp
 +++ b/src/model_loader.cpp
-@@ -1172,6 +1172,7 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+@@ -1198,6 +1198,7 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                  std::vector<uint8_t> read_buffer;
                  std::vector<uint8_t> convert_buffer;
                  std::vector<uint8_t> zip_entry_buffer;
@@ -24,7 +16,7 @@ index 6761d3e..950fecb 100644
  
                  while (true) {
                      int64_t t0, t1;
-@@ -1271,6 +1272,53 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+@@ -1297,6 +1298,53 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                          return true;
                      };
  
@@ -79,5 +71,5 @@ index 6761d3e..950fecb 100644
                      char* target_buf  = nullptr;
                      char* convert_buf = nullptr;
 -- 
-2.47.0
+2.39.1.windows.1
 

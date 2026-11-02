@@ -1,14 +1,8 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Mon, 19 Oct 2026 21:53:46 +0200
-Subject: [PATCH] server: /ps5sd/v1/app/<path> handed to the application
- (sd_app_request)
+From 0152789a8edf91b9cd139d2b11e4df3f5d3af4fa Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:26:11 +0100
+Subject: [PATCH 08/29] PS5 integration: 0054-server-application-routes
 
----
- examples/server/gallery.cpp      | 25 +++++++++++++++++++++++++
- examples/server/server_hooks.cpp |  3 +++
- examples/server/server_hooks.h   | 10 ++++++++++
- 3 files changed, 38 insertions(+)
 
 diff --git a/examples/server/gallery.cpp b/examples/server/gallery.cpp
 index eb5fbb2..e8fb0f5 100644
@@ -104,3 +98,6 @@ index 0592f70..36fc6fc 100644
  #ifdef __cplusplus
  }
  #endif
+-- 
+2.39.1.windows.1
+

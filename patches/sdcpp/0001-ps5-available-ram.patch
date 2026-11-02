@@ -1,5 +1,11 @@
+From a023af9c2f71560536586324a086381efbdb1a6a Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:26:08 +0100
+Subject: [PATCH 01/29] PS5 integration: 0001-ps5-available-ram
+
+
 diff --git a/src/core/backend_fit.cpp b/src/core/backend_fit.cpp
-index 84667ef..82411b6 100644
+index 120cbe4..738c7ae 100644
 --- a/src/core/backend_fit.cpp
 +++ b/src/core/backend_fit.cpp
 @@ -15,6 +15,13 @@
@@ -16,7 +22,7 @@ index 84667ef..82411b6 100644
  #endif
  
  #include "core/ggml_extend_backend.h"
-@@ -188,6 +195,12 @@ namespace sd::backend_fit {
+@@ -190,6 +197,12 @@ namespace sd::backend_fit {
          if (ok) {
              return ((int64_t)stats.free_count + stats.inactive_count) * page_size;
          }
@@ -29,3 +35,6 @@ index 84667ef..82411b6 100644
  #endif
          return -1;
      }
+-- 
+2.39.1.windows.1
+

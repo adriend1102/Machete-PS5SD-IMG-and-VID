@@ -1,32 +1,27 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Thu, 22 Oct 2026 18:00:00 +0200
-Subject: [PATCH] server: gallery with parameters, thumbnails, pages and search
+From a07d59a0cf2fde020b54c7766a4f9eb89c164300 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:35:35 +0100
+Subject: [PATCH 22/29] PS5 integration:
+ 0068-server-gallery-parameters-thumbnails-pages
 
-Each image saved to --output-dir carries its parameters as sd.cpp's own
-routes give them (a tEXt "parameters" chunk, A1111's text with sd.cpp's
-JSON at the end); a video's go to .thumbs/<name>.txt. Each saved image and
-video gets a thumbnail (.thumbs/<name>.jpg, 320 px), and older PNGs get
-theirs on the first request. GET /ps5sd/v1/gallery takes offset, order,
-q (a search in the prompts) and type, says the total in X-Total-Count and
-gives each file's prompt; GET /ps5sd/v1/gallery/info/<file> gives what
-made it.
----
+
 diff --git a/examples/server/async_jobs.cpp b/examples/server/async_jobs.cpp
-index 69a80de..60d83cb 100644
+index 601b0a1..6f724d1 100644
 --- a/examples/server/async_jobs.cpp
 +++ b/examples/server/async_jobs.cpp
-@@ -328,7 +328,8 @@ bool execute_img_gen_job(ServerRuntime& runtime,
+@@ -358,8 +358,9 @@ bool execute_img_gen_job(ServerRuntime& runtime,
+             }
          }
  
-         const int num_results                = results.count();
+-        const int num_results = results.count();
 -        const std::vector<std::string> saved = save_output_images(*runtime.svr_params, results);
++        const int num_results                = results.count();
 +        const std::vector<std::string> saved = save_output_images(*runtime.svr_params, results, runtime.ctx_params,
 +                                                                  &job.img_gen.gen_params);
          activity.finish(num_results > 0, saved_paths(saved));
          if (num_results <= 0) {
              error_message = sd_server_failure_reason("generate_image returned no results");
-@@ -432,7 +433,8 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
+@@ -465,7 +466,8 @@ bool execute_vid_gen_job(ServerRuntime& runtime,
          return false;
      }
      // PS5SD: into --output-dir like an image, so the gallery lists it.
@@ -514,12 +509,12 @@ index 851dde1..904a1df 100644
  // PS5SD: the saved paths one a line, in the order of the results, for
  // sd_activity_job_end ("" when nothing was saved).
 diff --git a/examples/server/routes_openai.cpp b/examples/server/routes_openai.cpp
-index f22c2c1..d9d5e02 100644
+index 2e13d75..72370f9 100644
 --- a/examples/server/routes_openai.cpp
 +++ b/examples/server/routes_openai.cpp
-@@ -246,7 +246,8 @@ static bool execute_sync_img_gen_request(ServerRuntime& runtime,
+@@ -239,7 +239,8 @@ static bool execute_sync_img_gen_request(ServerRuntime& runtime,
+             return false;
          }
-         results.adopt(raw_results, num_results);
      }
 -    const std::vector<std::string> saved = save_output_images(*runtime.svr_params, results);
 +    const std::vector<std::string> saved = save_output_images(*runtime.svr_params, results, runtime.ctx_params,
@@ -528,12 +523,12 @@ index f22c2c1..d9d5e02 100644
  
      if (results.empty()) {
 diff --git a/examples/server/routes_sdapi.cpp b/examples/server/routes_sdapi.cpp
-index f207ef7..3eedfa5 100644
+index 7489c5e..5d77c03 100644
 --- a/examples/server/routes_sdapi.cpp
 +++ b/examples/server/routes_sdapi.cpp
-@@ -428,7 +428,8 @@ void register_sdapi_endpoints(httplib::Server& svr, ServerRuntime& rt) {
+@@ -627,7 +627,8 @@ void register_sdapi_endpoints(httplib::Server& svr, ServerRuntime& rt) {
+                     return;
                  }
-                 results.adopt(raw_results, num_results);
              }
 -            const std::vector<std::string> saved = save_output_images(*runtime->svr_params, results);
 +            const std::vector<std::string> saved = save_output_images(*runtime->svr_params, results, runtime->ctx_params,
@@ -541,3 +536,6 @@ index f207ef7..3eedfa5 100644
              activity.finish(!results.empty(), saved_paths(saved));
  
              if (results.empty()) {
+-- 
+2.39.1.windows.1
+

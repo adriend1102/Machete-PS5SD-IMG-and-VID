@@ -1,17 +1,10 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Sat, 24 Oct 2026 12:00:00 +0200
-Subject: [PATCH] server: the generation time in a saved image's parameters
+From 840a1c0885ea0df7f798b0ccb9f3ec63eb812270 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:27:23 +0100
+Subject: [PATCH 28/29] PS5 integration:
+ 0074-server-generation-time-in-parameters
 
-ActivityJob::begin() notes when a generation starts. A saved image or video
-gets the seconds from then to its save in its parameters: "Time: 52.3 s, "
-next to "Preset:" in A1111's text, and "seconds" in the "ps5sd" object of
-sd.cpp's JSON. The web UI's gallery viewer shows it. One generation runs at a
-time (the context mutex), so one start is enough. With a batch, every image
-of the run gets the time of the whole run. A model of several files (FLUX,
-Z-Image, Wan) leaves A1111's "Model: " empty: it gets the diffusion model's
-name, which other tools read.
----
+
 diff --git a/examples/server/gallery.cpp b/examples/server/gallery.cpp
 index 013062e..1862457 100644
 --- a/examples/server/gallery.cpp
@@ -155,3 +148,6 @@ index 74efb8f..a0b192f 100644
  void sd_server_failure_log_cancelled() {
      std::lock_guard<std::mutex> lock(g_failure_mutex);
      g_failure_cancelled = true;
+-- 
+2.39.1.windows.1
+

@@ -1,51 +1,41 @@
-From 0000000000000000000000000000000000000000 Mon Sep 17 00:00:00 2001
-From: ps5sd <ps5sd@localhost>
-Date: Sat, 24 Oct 2026 12:00:00 +0200
-Subject: [PATCH] out of memory fails the job, not the process
+From 2e15ee594567955702a46a575c355c03897db24f Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:36:23 +0100
+Subject: [PATCH 25/29] PS5 integration: 0071-out-of-memory-fails-the-job
 
-An exception that leaves a std::thread ends the process. On the PS5 the
-title has about 2 GB of CPU heap, and a run of FLUX.2 Klein 9B with a LoRA
-ended PS5SD that way: std::bad_alloc while the model's weights were loaded
-again (the loader's worker threads). The loader's workers now catch it and
-fail the load with "out of memory" in the log; the async job worker catches
-what reaches it and fails the job with a reason. The graph code catches its
-own already, and sd::parallel_for passes exceptions to its caller.
----
+
 diff --git a/examples/server/async_jobs.cpp b/examples/server/async_jobs.cpp
-index f816613..018c5b6 100644
+index 747d485..dd929e2 100644
 --- a/examples/server/async_jobs.cpp
 +++ b/examples/server/async_jobs.cpp
-@@ -4,6 +4,7 @@
- 
+@@ -5,6 +5,7 @@
  #include <algorithm>
+ #include <chrono>
  #include <iomanip>
 +#include <new>
  #include <random>
  #include <sstream>
- 
-@@ -481,18 +482,34 @@ void async_job_worker(ServerRuntime& runtime) {
+ #include <thread>
+@@ -515,6 +516,7 @@ void async_job_worker(ServerRuntime& runtime) {
          std::string error_message;
          bool ok = false;
  
--        if (job->kind == AsyncJobKind::ImgGen) {
--            ok = execute_img_gen_job(runtime, manager, *job, output_images, error_message);
--        } else if (job->kind == AsyncJobKind::VidGen) {
--            ok = execute_vid_gen_job(runtime,
--                                     *job,
--                                     output_media_b64,
--                                     output_media_mime_type,
--                                     output_frame_count,
--                                     output_fps,
--                                     error_message);
--        } else {
--            error_message = "unsupported job kind";
++<<<<<<< HEAD
+         if (job->kind == AsyncJobKind::ImgGen) {
+             ok = execute_img_gen_job(runtime, manager, *job, output_images, output_info, error_message);
+         } else if (job->kind == AsyncJobKind::VidGen) {
+@@ -528,6 +530,35 @@ void async_job_worker(ServerRuntime& runtime) {
+                                      error_message);
+         } else {
+             error_message = "unsupported job kind";
++=======
 +        // PS5SD: an exception out of a generation ended this thread and with it the
 +        // process (std::terminate). On the PS5 the CPU heap is about 2 GB, and a run
 +        // that needs more throws std::bad_alloc outside the graph code, which catches
 +        // its own. The job fails with a reason instead, and the server keeps running.
 +        try {
 +            if (job->kind == AsyncJobKind::ImgGen) {
-+                ok = execute_img_gen_job(runtime, manager, *job, output_images, error_message);
++                ok = execute_img_gen_job(runtime, manager, *job, output_images, output_info, error_message);
 +            } else if (job->kind == AsyncJobKind::VidGen) {
 +                ok = execute_vid_gen_job(runtime,
 +                                         *job,
@@ -71,7 +61,7 @@ index f816613..018c5b6 100644
  
          {
 diff --git a/src/model_loader.cpp b/src/model_loader.cpp
-index 8822b2c..6761d3e 100644
+index c3682a7..42a0d05 100644
 --- a/src/model_loader.cpp
 +++ b/src/model_loader.cpp
 @@ -8,6 +8,7 @@
@@ -82,7 +72,7 @@ index 8822b2c..6761d3e 100644
  #include <regex>
  #include <set>
  #include <stdexcept>
-@@ -1145,7 +1146,11 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+@@ -1171,7 +1172,11 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
          std::mutex backend_tensor_set_mutex;
  
          for (int i = 0; i < n_threads; ++i) {
@@ -94,7 +84,7 @@ index 8822b2c..6761d3e 100644
                  std::ifstream file;
                  zip_t* zip = nullptr;
                  if (is_zip) {
-@@ -1352,6 +1357,16 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
+@@ -1378,6 +1383,16 @@ bool ModelLoader::load_tensors(on_new_tensor_cb_t on_new_tensor_cb,
                  if (zip != nullptr) {
                      zip_close(zip);
                  }
@@ -112,5 +102,5 @@ index 8822b2c..6761d3e 100644
          }
  
 -- 
-2.47.0
+2.39.1.windows.1
 

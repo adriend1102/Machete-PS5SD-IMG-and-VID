@@ -1,5 +1,11 @@
+From e53c45f04efd1cbe24fdf3769daf8287f3026bad Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:26:09 +0100
+Subject: [PATCH 02/29] PS5 integration: 0002-ps5-default-thread-count
+
+
 diff --git a/src/core/util.cpp b/src/core/util.cpp
-index c1d463e..42a1d99 100644
+index a691b42..db5b846 100644
 --- a/src/core/util.cpp
 +++ b/src/core/util.cpp
 @@ -29,6 +29,11 @@
@@ -34,3 +40,6 @@ index c1d463e..42a1d99 100644
      // enumerate the set of thread siblings, num entries is num cores
      std::unordered_set<std::string> siblings;
      for (uint32_t cpu = 0; cpu < UINT32_MAX; ++cpu) {
+-- 
+2.39.1.windows.1
+

@@ -1,3 +1,9 @@
+From eb06905d420d87613e7334192a2370b0ecd8c550 Mon Sep 17 00:00:00 2001
+From: adriend1102 <114516137+adriend1102@users.noreply.github.com>
+Date: Mon, 2 Nov 2026 20:26:09 +0100
+Subject: [PATCH 03/29] PS5 integration: 0003-ps5-file-stamp-without-times
+
+
 diff --git a/src/model_loader_files.cpp b/src/model_loader_files.cpp
 index 9ac5456..cc31224 100644
 --- a/src/model_loader_files.cpp
@@ -20,3 +26,6 @@ index 9ac5456..cc31224 100644
      if (!error && std::filesystem::is_regular_file(file_path, error)) {
          stamp.size = std::filesystem::file_size(file_path, error);
      }
+-- 
+2.39.1.windows.1
+
