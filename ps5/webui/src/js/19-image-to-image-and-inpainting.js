@@ -69,6 +69,9 @@
     var i = st.init, ref = refEdit();
     show('init-box', !!i);
     show('init-bar', !i, 'flex');
+    // Show Ref Boost on Create whenever Krea2 is loaded; it is sent only for edits
+    // that use a reference image.
+    show('ref-boost-row', /^Krea2/.test(loadedFamily()), 'flex');
     if (i) {
       var k = Math.min(1, 240 / Math.max(i.canvas.width, i.canvas.height));
       var t = canvasOf(Math.max(1, Math.round(i.canvas.width * k)), Math.max(1, Math.round(i.canvas.height * k)));
@@ -86,7 +89,6 @@
         : 'no mask: the whole image changes'));
       text($('init-mask'), i.mask ? 'Edit the mask' : 'Paint a mask');
       show('init-ref-row', refCapable(), 'flex');
-      show('ref-boost-row', /^Krea2/.test(loadedFamily()) && ref, 'flex');
       show('init-str-row', !ref, 'flex');
       show('init-mask', !ref, 'inline-block');
       show('init-crop-row', !!i.mask && !ref, 'flex');

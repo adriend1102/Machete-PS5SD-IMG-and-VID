@@ -1,0 +1,229 @@
+diff --git a/examples/common/generation_metadata.cpp b/examples/common/generation_metadata.cpp
+index 989e914..29e51c4 100644
+--- a/examples/common/generation_metadata.cpp
++++ b/examples/common/generation_metadata.cpp
+@@ -1,5 +1,6 @@
+ #include "generation_metadata.h"
+ 
++#include <cstdio>
+ #include <filesystem>
+ #include <map>
+ 
+@@ -150,6 +151,24 @@ std::string generation_info_to_webui(const std::string& text) {
+ std::string generation_info_to_image_metadata(const std::string& info) {
+     if (info.empty())
+         return "";
+-    const auto parameters = generation_info_to_webui(info);
++    auto parameters = generation_info_to_webui(info);
++    if (parameters.empty())
++        return info;
++    const auto parsed = nlohmann::json::parse(info, nullptr, false);
++    if (parsed.is_object() && parsed.contains("ps5sd") && parsed.at("ps5sd").is_object()) {
++        const auto& extra = parsed.at("ps5sd");
++        std::string fields;
++        const auto preset = extra.value("preset", std::string());
++        if (!preset.empty())
++            fields += "Preset: " + preset + ", ";
++        if (extra.contains("seconds") && extra.at("seconds").is_number()) {
++            char time[32];
++            std::snprintf(time, sizeof(time), "Time: %.1f s, ", extra.at("seconds").get<double>());
++            fields += time;
++        }
++        const auto at_version = parameters.rfind("Version: stable-diffusion.cpp");
++        if (at_version != std::string::npos)
++            parameters.insert(at_version, fields);
++    }
+     return parameters.empty() ? info : parameters + ", SDCPP: " + info;
+ }
+diff --git a/examples/server/async_jobs.cpp b/examples/server/async_jobs.cpp
+index 3b6dbd6..8b47613 100644
+--- a/examples/server/async_jobs.cpp
++++ b/examples/server/async_jobs.cpp
+@@ -93,7 +93,7 @@ static bool run_once_more_after(AsyncJobManager* manager, AsyncGenerationJob& jo
+     }
+     if (manager != nullptr) {
+         std::lock_guard<std::mutex> lock(manager->mutex);
+-        if (job.cancel_requested) {
++        if (job.cancel_requested.load()) {
+             return false;
+         }
+     }
+@@ -598,7 +598,7 @@ void async_job_worker(ServerRuntime& runtime) {
+                 job->result_fps             = output_fps;
+                 job->error_code.clear();
+                 job->error_message.clear();
+-            } else if (job->cancel_requested) {
++            } else if (job->cancel_requested.load()) {
+                 job->status        = AsyncJobStatus::Cancelled;
+                 job->error_code    = "cancelled";
+                 job->error_message = "job cancelled by client";
+diff --git a/examples/server/async_jobs.h b/examples/server/async_jobs.h
+index b970b18..ae454b2 100644
+--- a/examples/server/async_jobs.h
++++ b/examples/server/async_jobs.h
+@@ -52,8 +52,6 @@ struct AsyncGenerationJob {
+     int preview_pass          = 0;
+     int preview_step          = 0;
+     int preview_total_steps   = 0;
+-    // PS5SD: set when a client cancels the job while it generates.
+-    bool cancel_requested = false;
+     // PS5SD: img_gen "repeat". The worker updates done and saved under the
+     // manager mutex; total and random_seed are set before the job is queued.
+     int repeat_total        = 1;
+diff --git a/examples/server/gallery.cpp b/examples/server/gallery.cpp
+index 1862457..ccc56ba 100644
+--- a/examples/server/gallery.cpp
++++ b/examples/server/gallery.cpp
+@@ -28,6 +28,7 @@
+ #include <mutex>
+ 
+ #include "common/log.h"
++#include "common/generation_metadata.h"
+ #include "common/media_io.h"
+ #include "gallery.h"
+ #include "routes.h"
+@@ -149,16 +150,12 @@ static bool write_thumbnail(const fs::path& dir, const std::string& name, const
+     return !jpeg.empty() && write_whole(thumbs_dir(dir) / (name + ".jpg"), jpeg.data(), jpeg.size());
+ }
+ 
+-// The loaded preset's name and the time the generation took (since
+-// ActivityJob::begin, to this save) in an image's parameters: "Preset: <name>, Time: 52.3 s, "
+-// before "Version:" in A1111's text, and "ps5sd": {"preset", "seconds"} in
+-// sd.cpp's JSON at its end; an empty "Model: " gets the diffusion model's name.
+-// The text as it is without a preset and a time, or when it has no such places.
+-static std::string with_preset(const std::string& parameters) {
++// Add the loaded preset and elapsed time to a copy of the result's generation-info JSON.
++static std::string with_preset(const std::string& generation_info) {
+     std::string name     = preset_name_now();
+     const double seconds = sd_server_generation_seconds();
+-    if ((name.empty() && seconds < 0) || parameters.empty()) {
+-        return parameters;
++    if ((name.empty() && seconds < 0) || generation_info.empty()) {
++        return generation_info;
+     }
+     for (char& c : name) {
+         if (c == ',' || c == '\n' || c == '\r') {
+@@ -166,52 +163,22 @@ static std::string with_preset(const std::string& parameters) {
+         }
+     }
+     const double tenths = std::round(seconds * 10.0) / 10.0;
+-    std::string out      = parameters;
+-    const size_t at_json = out.rfind(", SDCPP: {");
+-    if (at_json != std::string::npos) {
+-        json j = json::parse(out.substr(at_json + 9), nullptr, false);
+-        if (j.is_object()) {
+-            json extra = json::object();
+-            if (!name.empty()) {
+-                extra["preset"] = name;
+-            }
+-            if (seconds >= 0) {
+-                extra["seconds"] = tenths;
+-            }
+-            j["ps5sd"] = extra;
+-            out        = out.substr(0, at_json) + ", SDCPP: " + j.dump(-1, ' ', false, json::error_handler_t::replace);
+-        }
++    json info = json::parse(generation_info, nullptr, false);
++    if (!info.is_object()) {
++        return generation_info;
+     }
+-    const size_t at_version = out.rfind("Version: stable-diffusion.cpp", at_json);  // npos: the whole text
+-    if (at_version != std::string::npos) {
+-        std::string add;
+-        if (!name.empty()) {
+-            add += "Preset: " + name + ", ";
+-        }
+-        if (seconds >= 0) {
+-            char buf[32];
+-            std::snprintf(buf, sizeof(buf), "Time: %.1f s, ", tenths);
+-            add += buf;
+-        }
+-        out.insert(at_version, add);
+-    }
+-    // A model of several files (FLUX, Z-Image, Wan) leaves A1111's "Model: " empty; other tools read
+-    // the model from it, so it gets the diffusion model's name ("Unet: ", without the extension).
+-    const size_t at_model = out.find(", Model: , ");
+-    const size_t at_unet  = out.find(", Unet: ");
+-    if (at_model != std::string::npos && at_unet != std::string::npos) {
+-        const size_t from = at_unet + 8;
+-        const size_t to   = out.find(", ", from);
+-        std::string unet  = out.substr(from, to == std::string::npos ? std::string::npos : to - from);
+-        const size_t dot  = unet.rfind('.');
+-        if (dot != std::string::npos && dot > 0) {
+-            unet.erase(dot);
+-        }
+-        if (!unet.empty() && unet.find('\n') == std::string::npos) {
+-            out.insert(at_model + 9, unet);
+-        }
++    json extra = info.value("ps5sd", json::object());
++    if (!extra.is_object()) {
++        extra = json::object();
+     }
+-    return out;
++    if (!name.empty()) {
++        extra["preset"] = name;
++    }
++    if (seconds >= 0) {
++        extra["seconds"] = tenths;
++    }
++    info["ps5sd"] = std::move(extra);
++    return info.dump(-1, ' ', false, json::error_handler_t::replace);
+ }
+ 
+ std::vector<std::string> save_output_images(const SDSvrParams& svr_params,
+@@ -228,15 +195,14 @@ std::vector<std::string> save_output_images(const SDSvrParams& svr_params,
+     std::error_code ec;
+     fs::create_directories(dir, ec);
+ 
+-    const bool embed    = ctx_params != nullptr && gen_params != nullptr && gen_params->embed_image_metadata;
+-    const int per_batch = embed && gen_params->batch_count > 0 ? std::max(1, images.count() / gen_params->batch_count) : 1;
++    const bool embed = ctx_params != nullptr && gen_params != nullptr && gen_params->embed_image_metadata;
+     for (int i = 0; i < images.count(); ++i) {
+         const sd_image_t& image = images[i];
+         if (image.data == nullptr) {
+             continue;
+         }
+-        // the seed of image i, as sd.cpp's own routes give it in their PNGs
+-        const std::string parameters = embed ? with_preset(get_image_params(*ctx_params, *gen_params, gen_params->seed + i / per_batch)) : "";
++        // The result owns the exact generation info (including the seed) for this image.
++        const std::string parameters = embed ? with_preset(images.generation_info(i)) : "";
+         std::vector<uint8_t> bytes   = encode_image_to_vector(EncodedImageFormat::PNG,
+                                                             image.data,
+                                                             image.width,
+@@ -270,7 +236,7 @@ std::string save_output_video(const SDSvrParams& svr_params,
+                               const std::string& parameters_in,
+                               const sd_image_t* first_frame,
+                               bool temporary) {
+-    const std::string parameters = with_preset(parameters_in);
++    const std::string generation_info = with_preset(parameters_in);
+     if (svr_params.output_dir.empty() || bytes.empty() ||
+         (format != "webm" && format != "webp" && format != "avi")) {
+         return "";
+@@ -289,8 +255,9 @@ std::string save_output_video(const SDSvrParams& svr_params,
+         LOG_ERROR("could not write %s", path.u8string().c_str());
+         return "";
+     }
+-    if (!parameters.empty()) {
++    if (!generation_info.empty()) {
+         fs::create_directories(thumbs_dir(dir), ec);
++        const std::string parameters = generation_info_to_image_metadata(generation_info);
+         write_whole(thumbs_dir(dir) / (name + ".txt"), parameters.data(), parameters.size());
+     }
+     if (first_frame != nullptr) {
+@@ -496,7 +463,7 @@ static json active_jobs_json(const AsyncJobManager& manager) {
+         j.erase("preview");
+         j.erase("result");
+         j["prompt"]           = job.kind == AsyncJobKind::VidGen ? job.vid_gen.gen_params.prompt : job.img_gen.gen_params.prompt;
+-        j["cancel_requested"] = job.cancel_requested;
++        j["cancel_requested"] = job.cancel_requested.load();
+         jobs.push_back(j);
+     }
+     std::sort(jobs.begin(), jobs.end(), [](const json& a, const json& b) { return a["created"] < b["created"]; });
+@@ -512,7 +479,7 @@ static bool interrupt_generation(ServerRuntime& rt) {
+         std::lock_guard<std::mutex> lock(rt.async_job_manager->mutex);
+         for (auto& kv : rt.async_job_manager->jobs) {
+             if (kv.second->status == AsyncJobStatus::Generating) {
+-                kv.second->cancel_requested = true;
++                kv.second->cancel_requested.store(true);
+                 async_job                   = true;
+             }
+         }

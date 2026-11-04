@@ -829,15 +829,15 @@ void generate_once() {
         std::free(text);
     }
     set_phase("Generating", options.prompt);
-    sd_image_t * images = nullptr;
-    int          count  = 0;
-    const bool   ok     = generate_image(ctx, &gen_params, &images, &count);
+    sd_image_generation_result_t* generated = nullptr;
+    const bool ok = generate_image(ctx, &gen_params, &generated);
+    const int count = generated ? generated->count : 0;
     const auto   t2     = std::chrono::steady_clock::now();
     std::printf("ps5sd: generate_image %s, %d image(s) in %.1f s\n", ok ? "done" : "failed", count,
                 std::chrono::duration<double>(t2 - t1).count());
     log_memory("after generating");
 
-    if (ok && count > 0 && images[0].data != nullptr) {
+    if (ok && count > 0 && generated->items[0].image.data != nullptr) {
         mkdir(kOutputs.c_str(), 0777);
         const std::string path = output_path();
         char parameters[1024];
@@ -846,7 +846,7 @@ void generate_once() {
                       options.prompt.c_str(), options.steps, options.cfg_scale, (long long) options.seed,
                       options.width, options.height, sd_sample_method_name(options.sample_method), model.c_str(),
                       PS5SD_VERSION);
-        const sd_image_t & im = images[0];
+        const sd_image_t & im = generated->items[0].image;
         const bool saved = stbi_write_png(path.c_str(), (int) im.width, (int) im.height, (int) im.channel, im.data, 0,
                                           parameters) != 0;
         std::printf("ps5sd: %s %s\n", saved ? "saved" : "could not save", path.c_str());
@@ -859,7 +859,7 @@ void generate_once() {
         set_phase("Generation failed", "See " + kLog);
         notify_outcome(("PS5SD: generation failed, see " + kLog).c_str());
     }
-    free_sd_images(images, count);
+    free_sd_image_generation_result(generated);
     free_sd_ctx(ctx);
     log_memory("after freeing the model");
 }
@@ -940,6 +940,14 @@ bool server_plan(ServerPlan & plan, std::string & error) {
     // Every image also as a PNG in outputs, listed at /ps5sd/v1/gallery.
     if (!names({ "--output-dir" })) {
         args.insert(args.end(), { "--output-dir", kOutputs });
+    }
+    // The PS5 process has no usable current directory. sd-server's default
+    // relative "models" root makes filesystem::absolute() call current_path()
+    // and fail on the console. Machete already discovers absolute roots here.
+    if (!names({ "--model-dir" })) {
+        for (const auto & dir : g_library.extra_models_dirs) {
+            args.insert(args.end(), { "--model-dir", dir });
+        }
     }
     // As in the one-shot (gen_args.cpp): the console's GPU, and no auto-fit,
     // which would count the one pool of direct memory twice (as RAM and VRAM).

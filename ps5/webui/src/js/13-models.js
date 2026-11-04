@@ -88,7 +88,7 @@
     drawModels();
     drawSaveBox();
     drawCurrent();
-    drawInit();  // the reference edit shows for FLUX.2 only
+    drawInit();  // reference-edit and Krea2-only controls follow the loaded model
   }
 
   // The Installed sub-view: image models, then video models (each row with its saved settings under it).

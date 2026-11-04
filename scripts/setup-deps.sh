@@ -185,7 +185,7 @@ log "mbedTLS: scripts/build-mbedtls.sh"
 PS5_VULKAN_ROOT="$vk" PS5_PAYLOAD_SDK="$sdk" bash "$root/scripts/build-mbedtls.sh"
 
 # the deploy script builds the launch payload with $root/.deps/ps5-payload-sdk.
-if [ ! -e "$root/.deps/ps5-payload-sdk" ]; then
+if [ ! -L "$root/.deps/ps5-payload-sdk" ] && [ ! -e "$root/.deps/ps5-payload-sdk" ]; then
     ln -s "$sdk" "$root/.deps/ps5-payload-sdk"
 fi
 

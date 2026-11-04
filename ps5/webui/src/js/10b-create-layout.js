@@ -11,7 +11,7 @@
   function setMode(name) {
     st.mode = name;
     drawMode();
-    summary();
+    drawInit();  // also refresh Krea2-only controls when the active mode changes
   }
 
   // The mode the page can show: a video model has only Video; a guide needs a ControlNet.

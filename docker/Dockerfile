@@ -16,7 +16,7 @@ COPY packages.txt /tmp/packages.txt
 # pacman's download sandbox (Landlock) fails under some container runtimes; the
 # line is only uncommented when this pacman ships it.
 RUN sed -i 's/^#\(DisableSandbox\)/\1/' /etc/pacman.conf && \
-    pacman -Syu --noconfirm --needed $(sed 's/#.*//' /tmp/packages.txt | xargs) && \
+    tr -d '\r' < /tmp/packages.txt | sed 's/#.*//' | xargs pacman -Syu --noconfirm --needed && \
     pacman -Scc --noconfirm && \
     rm -f /tmp/packages.txt
 

@@ -1,0 +1,13 @@
+diff --git a/examples/server/async_jobs.cpp b/examples/server/async_jobs.cpp
+--- a/examples/server/async_jobs.cpp
++++ b/examples/server/async_jobs.cpp
+@@ -557,7 +557,8 @@ void async_job_worker(ServerRuntime& runtime) {
+                 ok = execute_vid_gen_job(runtime,
+                                          *job,
+                                          output_media_b64,
+                                          output_media_mime_type,
+                                          output_frame_count,
+                                          output_fps,
++                                         output_info,
+                                          error_message);
+             } else {

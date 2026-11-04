@@ -116,6 +116,24 @@
     persist();
   }
 
+  // BigLove Krea2 Edit is the only model with a non-neutral Ref Boost default.
+  // Check both a preset and its base model: library entries may expose the name
+  // on either side of the relationship.
+  function refBoostDefault(entry) {
+    var base = entry && entry.base ? findModel(entry.base) : null;
+    var family = familyOf(entry, base);
+    if (!/^Krea2/.test(family)) return 1.0;
+    var models = [entry, base];
+    var names = '';
+    for (var i = 0; i < models.length; i++) {
+      var model = models[i];
+      if (!model) continue;
+      names += ' ' + (model.name || '') + ' ' + (model.id || '');
+      if (model.files && model.files.join) names += ' ' + model.files.join(' ');
+    }
+    return /big\s*love.*krea\s*2|krea\s*2.*big\s*love/i.test(names) ? 4.0 : 1.0;
+  }
+
   function drawClipSkip(entry) {
     var fam = entry ? familyOf(entry, entry.base ? findModel(entry.base) : null) : '';
     var sd1 = fam === 'SD 1.5', on = fam === '' || sd1 || fam === 'SD 2.1' || fam === 'SDXL';
@@ -166,10 +184,7 @@
     st.mkey = key;
     st.mid = entry ? entry.id : '';
     st.preset = presetFor(name, entry);
-    var modelNames = ((entry && entry.name) || '') + ' ' + ((entry && entry.id) || '') + ' ' + ((entry && entry.files) || []).join(' ');
-    st.preset.refBoost = /^Krea2/.test(familyOf(entry, entry && entry.base ? findModel(entry.base) : null))
-      ? (/big\s*love.*krea\s*2|krea\s*2.*big\s*love/i.test(modelNames) ? 4.0 : 1.0)
-      : 1.0;
+    st.preset.refBoost = refBoostDefault(entry);
     text($('presetnote'), presetNote(st.preset));
     st.cnModel = entry && entry.control_net ? entry.control_net : '';
     drawStarters(entry);
