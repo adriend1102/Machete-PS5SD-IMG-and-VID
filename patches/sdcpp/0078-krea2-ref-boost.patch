@@ -1,0 +1,327 @@
+diff --git a/src/model/common/rope.hpp b/src/model/common/rope.hpp
+index b6fdd32..8b945d8 100644
+--- a/src/model/common/rope.hpp
++++ b/src/model/common/rope.hpp
+@@ -1125,6 +1125,94 @@ namespace Rope {
+         return x_out;
+     }
+ 
++    // Additive attention-logit bias applied to one contiguous band of queries only.
++    // Krea2 ref_boost uses it to add log(boost) to the keys of the last reference
++    // for the target (noisy image) queries, exactly like comfyui-krea2edit's
++    // _ref_attn_bias, without materializing an [L, L] mask: the bias of every query
++    // in the band is the same key row, so `row_bias` holds that row repeated `rows`
++    // times ([L_k, rows]) and each query chunk views it.
++    struct QueryBandBias {
++        ggml_tensor* row_bias = nullptr;  // [L_k, rows], F32
++        int64_t q_begin       = 0;
++        int64_t q_count       = 0;
++
++        bool active() const {
++            return row_bias != nullptr && q_count > 0;
++        }
++    };
++
++    // q, k: [N*n_head, L, d_head] (RoPE applied), v: [N, L_k, n_kv_head, d_head].
++    // Return: [N, L, n_head*d_head].
++    // Queries outside the band use the normal attention path (Flash Attention when
++    // enabled, unmasked). Queries inside the band use manual attention in chunks of
++    // row_bias->ne[1] rows, so the score tensor stays [L_k, rows, n_head] and the
++    // Vulkan Flash Attention mask path (unreliable on RADV) is never used.
++    __STATIC_INLINE__ ggml_tensor* attention_query_band_bias(GGMLRunnerContext* ctx,
++                                                             ggml_tensor* q,
++                                                             ggml_tensor* k,
++                                                             ggml_tensor* v,
++                                                             int64_t n_head,
++                                                             const QueryBandBias& band,
++                                                             float kv_scale = 1.0f) {
++        ggml_context* gctx   = ctx->ggml_ctx;
++        const int64_t L_q    = q->ne[1];
++        const int64_t L_k    = k->ne[1];
++        const int64_t d_head = v->ne[0];
++        const int64_t N      = v->ne[3];
++        const int64_t rows   = band.row_bias->ne[1];
++        GGML_ASSERT(band.q_begin >= 0 && band.q_count > 0 && band.q_begin + band.q_count <= L_q);
++        GGML_ASSERT(band.row_bias->ne[0] == L_k && rows > 0);
++        GGML_ASSERT(band.row_bias->type == GGML_TYPE_F32 && ggml_is_contiguous(band.row_bias));
++
++        auto q_rows = [&](int64_t start, int64_t count) {
++            return ggml_view_3d(gctx, q, q->ne[0], count, q->ne[2], q->nb[1], q->nb[2], start * q->nb[1]);
++        };
++
++        std::vector<ggml_tensor*> parts;
++        if (band.q_begin > 0) {
++            parts.push_back(ggml_ext_attention_ext(ctx, q_rows(0, band.q_begin), k, v, n_head, nullptr, true,
++                                                   ctx->flash_attn_enabled, kv_scale));
++        }
++
++        if (ctx->attn_scale > 0.f) {
++            kv_scale = ctx->attn_scale;  // same override as ggml_ext_attention_ext(GGMLRunnerContext*)
++        }
++        const float scale = 1.0f / std::sqrt(static_cast<float>(d_head));
++        ggml_tensor* k_in = kv_scale != 1.0f ? ggml_scale(gctx, k, kv_scale) : k;
++        ggml_tensor* v_t  = ggml_cont(gctx, ggml_permute(gctx, v, 1, 2, 0, 3));  // [N, n_kv_head, d_head, L_k]
++        v_t               = ggml_reshape_3d(gctx, v_t, L_k, d_head, v_t->ne[2] * N);
++        if (kv_scale != 1.0f) {
++            v_t = ggml_scale(gctx, v_t, kv_scale);
++        }
++
++        std::vector<ggml_tensor*> band_chunks;
++        band_chunks.reserve((band.q_count + rows - 1) / rows);
++        const int64_t band_end = band.q_begin + band.q_count;
++        for (int64_t start = band.q_begin; start < band_end; start += rows) {
++            const int64_t count = std::min(rows, band_end - start);
++            ggml_tensor* q_chunk = ggml_cont(gctx, q_rows(start, count));  // [N*n_head, count, d_head]
++            ggml_tensor* kq      = ggml_mul_mat(gctx, k_in, q_chunk);      // [N*n_head, count, L_k]
++            ggml_prec_set_acc(kq, GGML_PREC_F32);
++            ggml_tensor* bias = ggml_view_2d(gctx, band.row_bias, L_k, count, band.row_bias->nb[1], 0);
++            kq                = ggml_soft_max_ext(gctx, kq, bias, scale / kv_scale, 0.0f);
++            band_chunks.push_back(ggml_mul_mat(gctx, v_t, kq));  // [N*n_head, count, d_head]
++        }
++        ggml_tensor* band_out = ggml_ext_vec_concat(gctx, band_chunks, 1);       // [N*n_head, q_count, d_head]
++        band_out              = ggml_reshape_4d(gctx, band_out, d_head, band.q_count, n_head, N);
++        band_out              = ggml_cont(gctx, ggml_permute(gctx, band_out, 0, 2, 1, 3));  // [N, q_count, n_head, d_head]
++        band_out              = ggml_reshape_3d(gctx, band_out, d_head * n_head, band.q_count, N);
++        if (kv_scale != 1.0f) {
++            band_out = ggml_scale(gctx, band_out, 1.0f / kv_scale);
++        }
++        parts.push_back(band_out);
++
++        if (band_end < L_q) {
++            parts.push_back(ggml_ext_attention_ext(ctx, q_rows(band_end, L_q - band_end), k, v, n_head, nullptr, true,
++                                                   ctx->flash_attn_enabled, kv_scale));
++        }
++        return parts.size() == 1 ? parts[0] : ggml_ext_vec_concat(gctx, parts, 1);
++    }
++
+     __STATIC_INLINE__ ggml_tensor* attention(GGMLRunnerContext* ctx,
+                                              ggml_tensor* q,
+                                              ggml_tensor* k,
+@@ -1132,7 +1220,8 @@ namespace Rope {
+                                              ggml_tensor* pe,
+                                              ggml_tensor* mask,
+                                              float kv_scale        = 1.0f,
+-                                             bool rope_interleaved = true) {
++                                             bool rope_interleaved = true,
++                                             const QueryBandBias* band_bias = nullptr) {
+         // q,k,v: [N, L, n_head, d_head]
+         // pe: [L, d_head/2, 2, 2]
+         // return: [N, L, n_head*d_head]
+@@ -1141,6 +1230,11 @@ namespace Rope {
+         q = apply_rope(ctx, q, pe, rope_interleaved);  // [N*n_head, L, d_head]
+         k = apply_rope(ctx, k, pe, rope_interleaved);  // [N*n_head, L, d_head]
+ 
++        if (band_bias != nullptr && band_bias->active()) {
++            GGML_ASSERT(mask == nullptr);
++            return attention_query_band_bias(ctx, q, k, v, n_head, *band_bias, kv_scale);
++        }
++
+         auto x = ggml_ext_attention_ext(ctx, q, k, v, n_head, mask, true, ctx->flash_attn_enabled, kv_scale);  // [N, L, n_head*d_head]
+         return x;
+     }
+diff --git a/src/model/diffusion/krea2.hpp b/src/model/diffusion/krea2.hpp
+index fba817a..283a2b8 100644
+--- a/src/model/diffusion/krea2.hpp
++++ b/src/model/diffusion/krea2.hpp
+@@ -263,8 +263,9 @@ namespace Krea2 {
+ 
+         ggml_tensor* forward(GGMLRunnerContext* ctx,
+                              ggml_tensor* x,
+-                             ggml_tensor* pe   = nullptr,
+-                             ggml_tensor* mask = nullptr) {
++                             ggml_tensor* pe                         = nullptr,
++                             ggml_tensor* mask                       = nullptr,
++                             const Rope::QueryBandBias* ref_boost    = nullptr) {
+             auto wq    = std::dynamic_pointer_cast<Linear>(blocks["wq"]);
+             auto wk    = std::dynamic_pointer_cast<Linear>(blocks["wk"]);
+             auto wv    = std::dynamic_pointer_cast<Linear>(blocks["wv"]);
+@@ -290,7 +291,8 @@ namespace Krea2 {
+             q = qnorm->forward(ctx, q);
+             k = knorm->forward(ctx, k);
+ 
+-            auto out = pe != nullptr ? Rope::attention(ctx, q, k, v, pe, mask)
++            GGML_ASSERT(ref_boost == nullptr || pe != nullptr);
++            auto out = pe != nullptr ? Rope::attention(ctx, q, k, v, pe, mask, 1.0f, true, ref_boost)
+                                      : attention_no_rope(ctx, q, k, v, mask);
+             out      = ggml_mul(ctx->ggml_ctx, out, ggml_sigmoid(ctx->ggml_ctx, gate->forward(ctx, x)));
+             out      = wo->forward(ctx, out);
+@@ -439,7 +441,8 @@ namespace Krea2 {
+                              ggml_tensor* vec,
+                              ggml_tensor* pe,
+                              ggml_tensor* vec_refs = nullptr,
+-                             int64_t ref_start     = -1) {
++                             int64_t ref_start     = -1,
++                             const Rope::QueryBandBias* ref_boost = nullptr) {
+             auto mod      = std::dynamic_pointer_cast<KreaDoubleSharedModulation>(blocks["mod"]);
+             auto prenorm  = std::dynamic_pointer_cast<KreaRMSNorm>(blocks["prenorm"]);
+             auto postnorm = std::dynamic_pointer_cast<KreaRMSNorm>(blocks["postnorm"]);
+@@ -470,7 +473,7 @@ namespace Krea2 {
+ 
+                 auto attn_input = ggml_concat(ctx->ggml_ctx, attn_in_main, attn_in_refs, 1);
+ 
+-                auto attn_out = attn->forward(ctx, attn_input, pe);
++                auto attn_out = attn->forward(ctx, attn_input, pe, nullptr, ref_boost);
+ 
+                 auto attn_out_main = ggml_view_3d(ctx->ggml_ctx, attn_out, D, len_main, B, attn_out->nb[1], attn_out->nb[2], 0);
+                 auto attn_out_refs = ggml_view_3d(ctx->ggml_ctx, attn_out, D, len_refs, B, attn_out->nb[1], attn_out->nb[2], len_main * attn_out->nb[1]);
+@@ -508,7 +511,7 @@ namespace Krea2 {
+                                                  mods[1],
+                                                  mods[0],
+                                                  true);
+-                auto attn_out   = attn->forward(ctx, attn_input, pe);
++                auto attn_out   = attn->forward(ctx, attn_input, pe, nullptr, ref_boost);
+                 x               = ggml_add(ctx->ggml_ctx, x, ggml_mul(ctx->ggml_ctx, attn_out, mods[2]));
+ 
+                 auto mlp_input = Flux::modulate(ctx,
+@@ -632,7 +635,8 @@ namespace Krea2 {
+                              ggml_tensor* context,
+                              ggml_tensor* pe,
+                              std::vector<ggml_tensor*> ref_latents = {},
+-                             bool zero_timestep_refs               = false) {
++                             bool zero_timestep_refs               = false,
++                             const Rope::QueryBandBias* ref_boost  = nullptr) {
+             int64_t W = x->ne[0];
+             int64_t H = x->ne[1];
+             int64_t N = x->ne[3];
+@@ -679,7 +683,7 @@ namespace Krea2 {
+             int64_t ref_start  = hidden_states->ne[1] - ref_len;
+             for (int i = 0; i < config.layers; ++i) {
+                 auto block    = std::dynamic_pointer_cast<KreaSingleStreamBlock>(blocks["blocks." + std::to_string(i)]);
+-                hidden_states = block->forward(ctx, hidden_states, tvec, pe, tvec_0, ref_start);
++                hidden_states = block->forward(ctx, hidden_states, tvec, pe, tvec_0, ref_start, ref_boost);
+                 sd::ggml_graph_cut::mark_graph_cut(hidden_states, "krea2.blocks." + std::to_string(i), "hidden_states");
+             }
+ 
+@@ -716,6 +720,7 @@ namespace Krea2 {
+ 
+     struct Krea2Runner : public DiffusionModelRunner {
+         sd::PECache pe_cache_;
++        std::string ref_boost_summary_;  // last logged ref_boost layout, to log once per change
+         Krea2Config config;
+         Krea2Model model;
+ 
+@@ -774,7 +779,63 @@ namespace Krea2 {
+             }));
+ 
+             auto runner_ctx  = get_context();
+-            ggml_tensor* out = model.forward(&runner_ctx, x, timesteps, context, pe, ref_latents, ref_image_params.force_ref_timestep_zero);
++            // Krea2 ref_boost (comfyui-krea2edit Krea2EditModelPatch.ref_boost): add log(ref_boost)
++            // to the attention logits of target queries on the keys of the LAST reference, in
++            // every block. Sequence here is [text | target | refs...]; the reference node uses
++            // [text | refs... | target], which is the same attention up to a permutation.
++            Rope::QueryBandBias ref_boost;
++            const bool boost_requested = ref_image_params.ref_boost != 1.0f;
++            if (boost_requested && ref_latents.empty()) {
++                LOG_WARN("krea2 ref_boost=%.3f has no effect: no reference latent reaches the DiT", ref_image_params.ref_boost);
++            } else if (boost_requested) {
++                const int64_t patch  = config.patch_size;
++                const auto patch_len = [patch](const ggml_tensor* latent) {
++                    return ((latent->ne[0] + patch - 1) / patch) * ((latent->ne[1] + patch - 1) / patch);
++                };
++                const int64_t txt_len = context->ne[1];
++                const int64_t img_len = patch_len(x);
++                int64_t total_ref_len = 0;
++                for (const auto* ref : ref_latents) {
++                    total_ref_len += patch_len(ref);
++                }
++                const int64_t last_ref_len   = patch_len(ref_latents.back());
++                const int64_t seq_len        = txt_len + img_len + total_ref_len;
++                const int64_t last_ref_start = seq_len - last_ref_len;
++
++                // Rows per query chunk: keep one chunk's F32 score tensor [L_k, rows, heads]
++                // near 128 MiB so the manual (non Flash Attention) path fits next to the weights.
++                constexpr int64_t score_budget_bytes = 128ll * 1024 * 1024;
++                int64_t rows = score_budget_bytes / std::max<int64_t>(1, seq_len * config.heads * static_cast<int64_t>(sizeof(float)));
++                rows         = std::max<int64_t>(16, std::min<int64_t>(512, rows));
++                rows         = std::min(rows, img_len);
++
++                std::vector<float> row_values(static_cast<size_t>(seq_len * rows), 0.0f);
++                const float bias = std::log(ref_image_params.ref_boost);
++                for (int64_t r = 0; r < rows; ++r) {
++                    std::fill(row_values.begin() + r * seq_len + last_ref_start, row_values.begin() + (r + 1) * seq_len, bias);
++                }
++                ref_boost.row_bias = make_input(sd::Tensor<float>({seq_len, rows, 1, 1}, std::move(row_values)));
++                ref_boost.q_begin  = txt_len;
++                ref_boost.q_count  = img_len;
++                char summary[256];
++                snprintf(summary, sizeof(summary),
++                         "krea2 ref_boost=%.3f (logit bias %.4f): text %lld, target %lld, refs %lld, boosted keys [%lld, %lld), %lld query rows per chunk",
++                         ref_image_params.ref_boost,
++                         bias,
++                         (long long)txt_len,
++                         (long long)img_len,
++                         (long long)total_ref_len,
++                         (long long)last_ref_start,
++                         (long long)seq_len,
++                         (long long)rows);
++                if (ref_boost_summary_ != summary) {
++                    ref_boost_summary_ = summary;
++                    LOG_INFO("%s", summary);
++                }
++            }
++            ggml_tensor* out = model.forward(&runner_ctx, x, timesteps, context, pe, ref_latents,
++                                             ref_image_params.force_ref_timestep_zero,
++                                             ref_boost.active() ? &ref_boost : nullptr);
+             ggml_build_forward_expand(gf, out);
+             return gf;
+         }
+diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
+index 4ff91c4..e820cc1 100644
+--- a/src/model/diffusion/model.hpp
++++ b/src/model/diffusion/model.hpp
+@@ -37,6 +37,7 @@ struct RefImageParams {
+     bool vae_center_crop               = false;
+     bool vlm_use_vae_input             = false;
+     RefImageSizeMode ref_image_size    = RefImageSizeMode::MATCH;
++    float ref_boost                    = 1.0f;
+ };
+ 
+ const std::unordered_map<std::string, RefImageParams> REF_IMAGE_PRESETS = {
+@@ -60,7 +61,10 @@ const std::unordered_map<std::string, RefImageParams> REF_IMAGE_PRESETS = {
+     {"mage_flow", {true, true, Rope::RefIndexMode::INCREASE, false, true, -1, RefImageResizeMode::LONGEST_SIDE, -1, 384, true}},
+     {"z_image_omni", {true, true, Rope::RefIndexMode::FIXED, false, true, -1, RefImageResizeMode::AREA, -1, -1}},
+     {"krea2_ostris_edit", {true, true, Rope::RefIndexMode::INCREASE, true, true, -1, RefImageResizeMode::AREA, -1, -1}},
+-    {"krea2_edit", {true, true, Rope::RefIndexMode::INCREASE, false, true, -1, RefImageResizeMode::LONGEST_SIDE, 768, 768}},
++    // comfyui-krea2edit pins the reference onto the target grid (RoPE frame 1, h/w aligned
++    // with the target), so the VAE reference is center-cropped to the target aspect and
++    // resized to the target size, as its training-matched "crop"/"fit" geometry does.
++    {"krea2_edit", {true, true, Rope::RefIndexMode::INCREASE, false, true, -1, RefImageResizeMode::LONGEST_SIDE, 768, 768, true, false, false, true}},
+     // pass_to_vlm routes the reference image to the conditioner, which is where LLaDA-Image's
+     // SigVQ encoder lives; it does its own half-resolution resize.
+     {"llada_image", {true, true, Rope::RefIndexMode::FIXED, true, true, -1, RefImageResizeMode::NONE, -1, -1, true}},
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index d161d9e..e4310ac 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -3134,6 +3134,14 @@ RefImageParams StableDiffusionGGML::resolve_ref_image_params(const char* ref_ima
+                 LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
+                 rejected_keys.insert(key);
+             }
++        } else if (key == "ref_boost") {
++            float parsed = 1.0f;
++            if (!parse_strict_float(value, parsed) || !std::isfinite(parsed) || parsed <= 0.0f) {
++                LOG_WARN("ignoring invalid reference image arg '%s=%s' (expected a finite number greater than zero)", key.c_str(), value.c_str());
++                rejected_keys.insert(key);
++            } else {
++                params.ref_boost = parsed;
++            }
+         } else if (key == "resize_before_vae") {
+             if (!parse_strict_bool(value, params.resize_before_vae)) {
+                 LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
+@@ -3243,6 +3251,16 @@ RefImageParams StableDiffusionGGML::resolve_ref_image_params(const char* ref_ima
+             LOG_WARN("MiniMax-H3 requires 32-pixel-aligned reference images and cannot skip resizing before VAE encoding; ignoring resize_before_vae=false");
+         }
+     }
++    if (sd_version_is_krea2(version)) {
++        LOG_INFO("krea2 reference params: preset '%s', ref_boost %.3f, ref timestep zero %s, vae ref to target %s (center crop %s), vlm size %d..%d",
++                 preset_name.c_str(),
++                 params.ref_boost,
++                 params.force_ref_timestep_zero ? "yes" : "no",
++                 params.resize_vae_to_target ? "yes" : "no",
++                 params.vae_center_crop ? "yes" : "no",
++                 params.vlm_min_size,
++                 params.vlm_max_size);
++    }
+     return params;
+ }
+ 

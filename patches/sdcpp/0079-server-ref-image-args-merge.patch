@@ -1,0 +1,96 @@
+diff --git a/examples/common/common.cpp b/examples/common/common.cpp
+index 637bbb6..66a5b4b 100644
+--- a/examples/common/common.cpp
++++ b/examples/common/common.cpp
+@@ -2182,6 +2182,53 @@ bool SDGenerationParams::parse_image_preprocess_json(const std::string& json_str
+ }
+ 
+ /** Populates generation params from a JSON payload (server APIs); returns false on any malformed field. */
++std::string merge_ref_image_args(const std::string& base, const std::string& request) {
++    // A request that only sets e.g. ref_boost must not drop the model's own
++    // --ref-image-args (preset=krea2_edit from the model file). The engine lets
++    // later keys win, except `preset`, where the first one wins.
++    auto keys_of = [](const std::string& args) {
++        std::vector<std::pair<std::string, std::string>> items;
++        size_t pos = 0;
++        while (pos <= args.size()) {
++            size_t end       = args.find(',', pos);
++            std::string item = args.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
++            size_t first     = item.find_first_not_of(" \t");
++            size_t last      = item.find_last_not_of(" \t");
++            if (first != std::string::npos) {
++                item          = item.substr(first, last - first + 1);
++                size_t eq     = item.find('=');
++                std::string k = item.substr(0, eq);
++                k.erase(k.find_last_not_of(" \t") + 1);
++                items.emplace_back(k, item);
++            }
++            if (end == std::string::npos) {
++                break;
++            }
++            pos = end + 1;
++        }
++        return items;
++    };
++    if (request.find_first_not_of(" \t,") == std::string::npos) {
++        return base;
++    }
++    const auto request_items = keys_of(request);
++    bool request_has_preset  = false;
++    for (const auto& item : request_items) {
++        request_has_preset = request_has_preset || item.first == "preset";
++    }
++    std::string merged;
++    for (const auto& item : keys_of(base)) {
++        if (request_has_preset && item.first == "preset") {
++            continue;
++        }
++        merged += (merged.empty() ? "" : ",") + item.second;
++    }
++    for (const auto& item : request_items) {
++        merged += (merged.empty() ? "" : ",") + item.second;
++    }
++    return merged;
++}
++
+ bool SDGenerationParams::from_json_str(
+     const std::string& json_str,
+     const std::function<std::string(const std::string&)>& lora_path_resolver) {
+@@ -2233,7 +2280,9 @@ bool SDGenerationParams::from_json_str(
+     load_if_exists("cache_mode", cache_mode);
+     load_if_exists("cache_option", cache_option);
+     load_if_exists("scm_mask", scm_mask);
+-    load_if_exists("ref_image_args", ref_image_args);
++    if (j.contains("ref_image_args") && j["ref_image_args"].is_string()) {
++        ref_image_args = merge_ref_image_args(ref_image_args, j["ref_image_args"].get<std::string>());
++    }
+ 
+     load_if_exists("clip_skip", clip_skip);
+     load_if_exists("width", width);
+diff --git a/examples/common/common.h b/examples/common/common.h
+index 39d6011..7402751 100644
+--- a/examples/common/common.h
++++ b/examples/common/common.h
+@@ -203,6 +203,9 @@ struct SDContextParams {
+     sd_ctx_params_t to_sd_ctx_params_t();
+ };
+ 
++// Merges request reference-image args over the model defaults (request keys win).
++std::string merge_ref_image_args(const std::string& base, const std::string& request);
++
+ struct SDGenerationParams {
+     // User-facing input fields.
+     std::string prompt;
+diff --git a/examples/server/routes_sdapi.cpp b/examples/server/routes_sdapi.cpp
+index 9931077..e8d142a 100644
+--- a/examples/server/routes_sdapi.cpp
++++ b/examples/server/routes_sdapi.cpp
+@@ -396,7 +396,7 @@ static bool build_sdapi_img_gen_request(const json& j,
+             error_message = "ref_image_args must be a string";
+             return false;
+         }
+-        request.gen_params.ref_image_args = j["ref_image_args"].get<std::string>();
++        request.gen_params.ref_image_args = merge_ref_image_args(request.gen_params.ref_image_args, j["ref_image_args"].get<std::string>());
+     }
+ 
+     if (j.contains("image_preprocess") && !request.gen_params.parse_image_preprocess_json(j["image_preprocess"].dump())) {
