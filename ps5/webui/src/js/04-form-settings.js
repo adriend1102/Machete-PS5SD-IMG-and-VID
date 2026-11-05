@@ -116,14 +116,18 @@
     persist();
   }
 
-  // BigLove Krea2 Edit is the only model with a non-neutral Ref Boost default.
-  // Check both a preset and its base model: library entries may expose the name
-  // on either side of the relationship.
+  // The Ref Boost field's default: the preset's own ref_boost ("# defaults: ref_boost=3"
+  // or ref_boost= in its --ref-image-args, sent by /models as entry.ref_boost), else 4
+  // for BigLove Krea2 Edit, else 1 (off). The field's value replaces it in each request.
   function refBoostDefault(entry) {
     var base = entry && entry.base ? findModel(entry.base) : null;
     var family = familyOf(entry, base);
     if (!/^Krea2/.test(family)) return 1.0;
     var models = [entry, base];
+    for (var j = 0; j < models.length; j++) {
+      var own = models[j] ? parseFloat(models[j].ref_boost) : 0;
+      if (own > 0) return own;
+    }
     var names = '';
     for (var i = 0; i < models.length; i++) {
       var model = models[i];

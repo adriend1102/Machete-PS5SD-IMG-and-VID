@@ -52,3 +52,38 @@ of `7cbb2e2`, whose GGUF BigLove Krea2 works on the console with
 
 8-bit files (int8, mxfp8, fp8mixed: 12-13 GB) do not fit the console's 11.4 GiB
 next to the text encoder; they need the diffusion weights off the GPU too.
+
+## 2026-11-05: ref_boost as an attention bias (patch 0080)
+
+Why `c867a60` / `f3cfca5` gave flat single-colour images: the boost row was
+handed to the graph with `make_input(sd::Tensor<float>(...))`, a temporary.
+Graph inputs are copied from host memory when the graph runs, after
+`build_graph` returns, so every block read freed memory as its logit bias
+(garbage or NaN in the attention, a flat image at the end). The `pe` input
+works because it lives in `pe_cache_`.
+
+`patches/sdcpp/0080-krea2-ref-boost-attn-bias.patch`:
+
+- `ref_boost=<x>` in `--ref-image-args` (model .txt) or in a request's
+  `ref_image_args` (web UI). With 0079 the request's value comes after the
+  .txt one and the engine keeps the last, so the UI field replaces the .txt
+  value; the .txt preset (`preset=krea2_edit`) still applies.
+- `x == 1` (or no reference image) builds exactly the 7cbb2e2 graph: no bias,
+  no extra nodes.
+- Otherwise `log(x)` is added to the attention logits of the target queries
+  on the keys of the last reference, in all 28 blocks (comfyui-krea2edit
+  `_ref_attn_bias`; here the sequence is `[text | target | refs]`). It is one
+  `[L, L]` F16 mask through the existing flash-attention mask path (F32 and
+  the manual path when flash attention is off), owned by the Krea2 runner and
+  rebuilt only when the layout or the value changes. Size: about 18 MiB at
+  512x512 with a 512 reference, about 350 MiB at 1024x1536; above 1 GiB it is
+  skipped with a warning.
+- The log shows `krea2 reference params: preset ..., ref_boost ...` and
+  `krea2 ref_boost=... (logit bias ...): text ..., target ..., refs ... tokens`.
+- Checked on the CPU backend against a naive attention with the bias
+  (flash F16 mask 2e-3, manual F32 mask 1e-6, boost 1 equals no mask).
+  Not run on Vulkan here (no usable Vulkan device in the build machine).
+
+UI: `/models` sends each preset's `ref_boost` (from `# defaults: ref_boost=`
+or its `--ref-image-args`) and the Ref Boost field starts from it (else 4
+for BigLove Krea2 Edit, else 1).
