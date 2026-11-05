@@ -507,7 +507,7 @@ std::string slug(const std::string & name) {
 bool valid_default(const std::string & key, const std::string & value) {
     static const char * const kKeys[] = { "steps",       "cfg",         "width",         "height",        "sampler",
                                           "scheduler",   "loras",       "hires_scale",   "hires_steps",   "hires_denoise",
-                                          "hires_upscaler", "clip_skip", "ref_boost" };
+                                          "hires_upscaler", "clip_skip" };
     bool known = false;
     for (const char * k : kKeys) {
         known = known || key == k;
@@ -729,40 +729,6 @@ void set_load_error(const std::string & id, const std::string & message) {
     g_load_error_message = id.empty() ? "" : message;
 }
 
-namespace {
-
-// The Krea2 Ref Boost a preset sets: "ref_boost=" in "# defaults:", else in its
-// --ref-image-args. 0 when it sets none. The web UI shows it as the field's default.
-double preset_ref_boost(const ModelEntry & e) {
-    const auto number = [](const std::string & v) {
-        char *       end = nullptr;
-        const double x   = std::strtod(v.c_str(), &end);
-        return end != v.c_str() && *end == '\0' && x > 0.0 && x <= 100.0 ? x : 0.0;
-    };
-    for (const auto & kv : e.defaults) {
-        if (kv.first == "ref_boost" && number(kv.second) > 0.0) {
-            return number(kv.second);
-        }
-    }
-    double found = 0.0;
-    for (size_t i = 0; i + 1 < e.args.size(); i++) {
-        if (e.args[i] != "--ref-image-args") {
-            continue;
-        }
-        std::istringstream in(e.args[i + 1]);
-        for (std::string item; std::getline(in, item, ',');) {
-            item           = trim(item);
-            const size_t eq = item.find('=');
-            if (eq != std::string::npos && trim(item.substr(0, eq)) == "ref_boost" && number(trim(item.substr(eq + 1))) > 0.0) {
-                found = number(trim(item.substr(eq + 1)));  // the engine keeps the last one
-            }
-        }
-    }
-    return found;
-}
-
-}  // namespace
-
 std::string models_json(const ModelLibrary & library, const std::string & active, const std::string & loaded,
                         bool switching, bool standby) {
     nlohmann::json list = nlohmann::json::array();
@@ -784,8 +750,7 @@ std::string models_json(const ModelLibrary & library, const std::string & active
                          { "part", e.kind == "file" && !e.files.empty() ? net_part(e.files[0]) : "" },
                          { "prompt", e.prompt_starter },
                          { "negative", e.negative_starter },
-                         { "defaults", defaults },
-                         { "ref_boost", preset_ref_boost(e) } });
+                         { "defaults", defaults } });
     }
     nlohmann::json load_error = nullptr;
     {
