@@ -902,19 +902,8 @@ bool server_plan(ServerPlan & plan, std::string & error) {
         extra      = kept;
         model_args = entry.args;
         if (g_settings.face_studio_enabled && FaceStudio::instance().has_reference_face()) {
-            // Models with their own reference-image path (Krea2 edit: --ref-image-args and a
-            // vision encoder) already carry identity; PhotoMaker or a face init image on top of
-            // them would be a second identity adapter.
-            const auto has_arg = [&](const char * option) {
-                return std::find(model_args.begin(), model_args.end(), option) != model_args.end();
-            };
-            if (has_arg("--ref-image-args") || has_arg("--llm_vision")) {
-                std::printf("ps5sd: face studio: %s edits with its own reference image; PhotoMaker and the face init image are not added\n",
-                            entry.id.c_str());
-            } else {
-                std::string dummy_prompt;
-                FaceStudio::instance().inject_face_parameters(model_args, dummy_prompt);
-            }
+            std::string dummy_prompt;
+            FaceStudio::instance().inject_face_parameters(model_args, dummy_prompt);
         }
         plan.id    = entry.id;
         plan.name  = entry.name;
