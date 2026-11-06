@@ -1,0 +1,223 @@
+diff --git a/src/conditioning/conditioner.hpp b/src/conditioning/conditioner.hpp
+index e3832a1..e7864a8 100644
+--- a/src/conditioning/conditioner.hpp
++++ b/src/conditioning/conditioner.hpp
+@@ -2919,7 +2919,8 @@ struct LLMEmbedder : public Conditioner {
+                     auto image_embed   = llm->encode_image(n_threads, resized_image, false);
+                     GGML_ASSERT(!image_embed.empty());
+ 
+-                    std::string image_prefix = prompt + img_prompt + "Picture " + std::to_string(i + 1) + ": <|vision_start|>";
++                    const std::string label   = conditioner_params.ref_image_params.vlm_picture_labels ? "Picture " + std::to_string(i + 1) + ": " : "";
++                    std::string image_prefix = prompt + img_prompt + label + "<|vision_start|>";
+                     std::vector<int> prefix_tokens;
+                     if (!tokenizer->encode(image_prefix, prefix_tokens, nullptr)) {
+                         return {};
+@@ -2930,7 +2931,7 @@ struct LLMEmbedder : public Conditioner {
+                     }
+                     image_embeds.emplace_back(image_embed_idx, image_embed);
+ 
+-                    img_prompt += "Picture " + std::to_string(i + 1) + ": <|vision_start|>";
++                    img_prompt += label + "<|vision_start|>";
+                     img_prompt += placeholder;
+                     img_prompt += "<|vision_end|>";
+                 }
+diff --git a/src/model/diffusion/krea2.hpp b/src/model/diffusion/krea2.hpp
+index de9f61e..57b35f5 100644
+--- a/src/model/diffusion/krea2.hpp
++++ b/src/model/diffusion/krea2.hpp
+@@ -705,14 +705,43 @@ namespace Krea2 {
+                                                    float theta,
+                                                    const std::vector<int>& axes_dim,
+                                                    const std::vector<ggml_tensor*>& ref_latents,
+-                                                   Rope::RefIndexMode ref_index_mode) {
++                                                   Rope::RefIndexMode ref_index_mode,
++                                                   bool ref_fit_to_target = false) {
+         Rope::Embedding result;
+         result.batch_size = bs;
+         result.positions.append_tokens(context_len);
+         auto txt_ids = Rope::gen_flux_txt_ids(bs, context_len, 3, {});
+         auto img_ids = Rope::gen_flux_img_ids(h, w, patch_size, bs, 3, 0, 0, 0, false, &result.positions);
+         auto ids     = Rope::concat_ids(txt_ids, img_ids, bs);
+-        if (ref_latents.size() > 0) {
++        if (ref_latents.size() > 0 && ref_fit_to_target) {
++            // Fitted refs are already at the target's grid density: stride-1 positions, centered
++            // (half-token offsets allowed) on the target, frame 1..N.
++            const int th = (h + patch_size / 2) / patch_size;
++            const int tw = (w + patch_size / 2) / patch_size;
++            int frame    = 1;
++            for (ggml_tensor* ref : ref_latents) {
++                const int gh      = (static_cast<int>(ref->ne[1]) + patch_size / 2) / patch_size;
++                const int gw      = (static_cast<int>(ref->ne[0]) + patch_size / 2) / patch_size;
++                const float off_h = std::max(0.0f, (th - gh) / 2.0f);
++                const float off_w = std::max(0.0f, (tw - gw) / 2.0f);
++                result.positions.append_image(gh, gw);
++                std::vector<std::vector<float>> ref_ids(static_cast<size_t>(bs) * gh * gw, std::vector<float>(3));
++                for (int b = 0; b < bs; ++b) {
++                    for (int i = 0; i < gh; ++i) {
++                        for (int j = 0; j < gw; ++j) {
++                            auto& id = ref_ids[(static_cast<size_t>(b) * gh + i) * gw + j];
++                            id[0]    = static_cast<float>(frame);
++                            id[1]    = i + off_h;
++                            id[2]    = j + off_w;
++                        }
++                    }
++                }
++                ids = Rope::concat_ids(ids, ref_ids, bs);
++                if (ref_index_mode != Rope::RefIndexMode::FIXED) {
++                    ++frame;
++                }
++            }
++        } else if (ref_latents.size() > 0) {
+             auto refs_ids = Rope::gen_refs_ids(patch_size, bs, 3, 1, ref_latents, ref_index_mode, 1.0f, false, 0, &result.positions);
+             ids           = Rope::concat_ids(ids, refs_ids, bs);
+         }
+@@ -841,7 +870,7 @@ namespace Krea2 {
+             sd::PECacheKey pe_key("krea2.pe");
+             pe_key.add_shape(x).add_shape(context).add(config.theta).add(config.axes_dim).add(config.axes_dim_sum);
+             pe_key.add(circular_x_enabled).add(circular_y_enabled).add(config.patch_size).add_shapes(ref_latents);
+-            pe_key.add(ref_image_params.ref_index_mode);
++            pe_key.add(ref_image_params.ref_index_mode).add(ref_image_params.ref_fit_to_target);
+             auto pe = make_input(pe_cache_.get_or_create(pe_key, [&]() {
+                 auto pe_vec = finish_rope_pe(gen_krea2_pe(static_cast<int>(x->ne[1]),
+                                                           static_cast<int>(x->ne[0]),
+@@ -851,7 +880,8 @@ namespace Krea2 {
+                                                           config.theta,
+                                                           config.axes_dim,
+                                                           ref_latents,
+-                                                          ref_image_params.ref_index_mode));
++                                                          ref_image_params.ref_index_mode,
++                                                          ref_image_params.ref_fit_to_target));
+                 int pos_len = static_cast<int>(pe_vec.size() / config.axes_dim_sum / 2);
+                 return sd::Tensor<float>({2, 2, config.axes_dim_sum / 2, pos_len}, std::move(pe_vec));
+             }));
+diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
+index 0afee14..6b2dfd5 100644
+--- a/src/model/diffusion/model.hpp
++++ b/src/model/diffusion/model.hpp
+@@ -38,6 +38,11 @@ struct RefImageParams {
+     bool vlm_use_vae_input             = false;
+     RefImageSizeMode ref_image_size    = RefImageSizeMode::MATCH;
+     float ref_boost                    = 1.0f;
++    // comfyui-krea2edit "fit": each reference is resampled in pixel space to the target's grid
++    // density (center-crop to the target aspect ratio when it is within 8%, else fit inside on
++    // the /16 grid) and its tokens sit stride-1 at a centered offset on the target's positions.
++    bool ref_fit_to_target  = false;
++    bool vlm_picture_labels = true;  // "Picture N: " before each image in the VLM prompt
+ };
+ 
+ const std::unordered_map<std::string, RefImageParams> REF_IMAGE_PRESETS = {
+@@ -61,7 +66,12 @@ const std::unordered_map<std::string, RefImageParams> REF_IMAGE_PRESETS = {
+     {"mage_flow", {true, true, Rope::RefIndexMode::INCREASE, false, true, -1, RefImageResizeMode::LONGEST_SIDE, -1, 384, true}},
+     {"z_image_omni", {true, true, Rope::RefIndexMode::FIXED, false, true, -1, RefImageResizeMode::AREA, -1, -1}},
+     {"krea2_ostris_edit", {true, true, Rope::RefIndexMode::INCREASE, true, true, -1, RefImageResizeMode::AREA, -1, -1}},
+-    {"krea2_edit", {true, true, Rope::RefIndexMode::INCREASE, false, true, -1, RefImageResizeMode::LONGEST_SIDE, 768, 768}},
++    {"krea2_edit", [] {
++         RefImageParams params{true, true, Rope::RefIndexMode::INCREASE, false, true, -1, RefImageResizeMode::LONGEST_SIDE, 768, 768};
++         params.ref_fit_to_target  = true;
++         params.vlm_picture_labels = false;
++         return params;
++     }()},
+     // pass_to_vlm routes the reference image to the conditioner, which is where LLaDA-Image's
+     // SigVQ encoder lives; it does its own half-resolution resize.
+     {"llada_image", {true, true, Rope::RefIndexMode::FIXED, true, true, -1, RefImageResizeMode::NONE, -1, -1, true}},
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index aa23b1c..ea79569 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -3147,6 +3147,16 @@ RefImageParams StableDiffusionGGML::resolve_ref_image_params(const char* ref_ima
+                 LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
+                 rejected_keys.insert(key);
+             }
++        } else if (key == "fit_to_target") {
++            if (!parse_strict_bool(value, params.ref_fit_to_target)) {
++                LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
++                rejected_keys.insert(key);
++            }
++        } else if (key == "vlm_picture_labels") {
++            if (!parse_strict_bool(value, params.vlm_picture_labels)) {
++                LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
++                rejected_keys.insert(key);
++            }
+         } else if (key == "resize_vae_to_target") {
+             if (!parse_strict_bool(value, params.resize_vae_to_target)) {
+                 LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
+@@ -3252,8 +3262,10 @@ RefImageParams StableDiffusionGGML::resolve_ref_image_params(const char* ref_ima
+         }
+     }
+     if (sd_version_is_krea2(version)) {
+-        LOG_INFO("krea2 reference params: preset '%s', ref_boost %.3f, ref timestep zero %s",
+-                 preset_name.c_str(), params.ref_boost, params.force_ref_timestep_zero ? "yes" : "no");
++        LOG_INFO("krea2 reference params: preset '%s', ref_boost %.3f, ref timestep zero %s, fit to target %s, VLM picture labels %s, VLM size %d-%d",
++                 preset_name.c_str(), params.ref_boost, params.force_ref_timestep_zero ? "yes" : "no",
++                 params.ref_fit_to_target ? "yes" : "no", params.vlm_picture_labels ? "yes" : "no",
++                 params.vlm_min_size, params.vlm_max_size);
+     }
+     return params;
+ }
+diff --git a/src/pipeline/image.cpp b/src/pipeline/image.cpp
+index 607ec18..8368566 100644
+--- a/src/pipeline/image.cpp
++++ b/src/pipeline/image.cpp
+@@ -16,6 +16,42 @@
+ 
+ namespace sd::pipeline {
+ 
++    // comfyui-krea2edit's pixel-path "fit" (the geometry Krea2 Identity Edit was trained on):
++    // a reference whose aspect ratio is within 8% of the target is center-cropped to it and
++    // resized to exactly the target size; otherwise it is fitted inside the target on the
++    // /16 grid, after a center crop that makes the fitted size land on that grid exactly.
++    // Image tensors are [W, H, C, N].
++    static sd::Tensor<float> fit_ref_image_to_target(const sd::Tensor<float>& image, int target_w, int target_h) {
++        const int64_t iw = image.shape()[0];
++        const int64_t ih = image.shape()[1];
++        const double sc  = std::min(static_cast<double>(target_h) / ih, static_cast<double>(target_w) / iw);
++        int64_t crop_w, crop_h, out_w, out_h;
++        constexpr double crop_tolerance = 0.08;
++        if (ih * sc >= target_h * (1.0 - crop_tolerance) && iw * sc >= target_w * (1.0 - crop_tolerance)) {
++            const double s = std::max(static_cast<double>(target_h) / ih, static_cast<double>(target_w) / iw);
++            crop_h         = std::min<int64_t>(ih, static_cast<int64_t>(std::llround(target_h / s)));
++            crop_w         = std::min<int64_t>(iw, static_cast<int64_t>(std::llround(target_w / s)));
++            out_h          = target_h;
++            out_w          = target_w;
++        } else {
++            out_h  = std::min<int64_t>(std::max<int64_t>(16, static_cast<int64_t>(ih * sc) / 16 * 16), std::max(16, target_h / 16 * 16));
++            out_w  = std::min<int64_t>(std::max<int64_t>(16, static_cast<int64_t>(iw * sc) / 16 * 16), std::max(16, target_w / 16 * 16));
++            crop_h = std::min<int64_t>(ih, std::max<int64_t>(1, std::llround(out_h / sc)));
++            crop_w = std::min<int64_t>(iw, std::max<int64_t>(1, std::llround(out_w / sc)));
++        }
++        const int64_t x0 = (iw - crop_w) / 2;
++        const int64_t y0 = (ih - crop_h) / 2;
++        auto cropped     = sd::ops::slice(image, 0, x0, x0 + crop_w);
++        cropped          = sd::ops::slice(cropped, 1, y0, y0 + crop_h);
++        auto fitted = sd::ops::interpolate(cropped, {out_w, out_h, image.shape()[2], image.shape()[3]},
++                                           sd::ops::InterpolateMode::Bicubic, false, true);
++        float* data = fitted.data();
++        for (int64_t k = 0; k < fitted.numel(); ++k) {
++            data[k] = std::min(1.0f, std::max(0.0f, data[k]));
++        }
++        return fitted;
++    }
++
+     struct CircularAxesState {
+         bool circular_x = false;
+         bool circular_y = false;
+@@ -323,7 +359,18 @@ namespace sd::pipeline {
+                 continue;
+             }
+             sd::Tensor<float> ref_latent;
+-            if (ref_image_params.resize_before_vae && !sd_version_is_pid(sd->version)) {
++            if (ref_image_params.ref_fit_to_target && ref_image_params.resize_before_vae) {
++                auto fitted = fit_ref_image_to_target(ref_images[i], request->width, request->height);
++                LOG_INFO("krea2 fit reference %d: %" PRId64 "x%" PRId64 " -> %" PRId64 "x%" PRId64 " (target %dx%d)",
++                         static_cast<int>(i),
++                         ref_images[i].shape()[0], ref_images[i].shape()[1],
++                         fitted.shape()[0], fitted.shape()[1],
++                         request->width, request->height);
++                ref_latent = sd->encode_first_stage(fitted);
++                if (ref_image_params.vlm_use_vae_input) {
++                    ref_images[i] = std::move(fitted);
++                }
++            } else if (ref_image_params.resize_before_vae && !sd_version_is_pid(sd->version)) {
+                 LOG_VERBOSE("auto resize ref images");
+                 double vae_width;
+                 double vae_height;

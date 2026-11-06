@@ -87,3 +87,28 @@ works because it lives in `pe_cache_`.
 UI: `/models` sends each preset's `ref_boost` (from `# defaults: ref_boost=`
 or its `--ref-image-args`) and the Ref Boost field starts from it (else 4
 for BigLove Krea2 Edit, else 1).
+
+## 2026-11-06: reference geometry and VLM prompt as in training (patch 0081)
+
+`preset=krea2_edit` now prepares the reference the way comfyui-krea2edit's
+default `fit` pixel path does (the geometry the Identity Edit weights merged in
+BigLove KreaEdit were trained on):
+
+- The reference is resampled in pixel space (bicubic, antialiased) to the
+  target's grid density. Within 8% of the target aspect ratio it is
+  center-cropped to it and resized to exactly the output size; otherwise it is
+  fitted inside on the /16 grid (after a center crop so the fitted size lands on
+  the grid exactly). Before, it kept its own aspect ratio at up to 1 MP, so at
+  1024x1536 a phone photo became 864x1152: its tokens no longer lined up with
+  the target's (ref token (h, w) sits on target token (h, w) during training),
+  which costs likeness, most with small faces.
+- Its RoPE positions are stride 1, centered on the target (half-token offsets
+  allowed), frame 1.
+- The Qwen3-VL prompt no longer puts "Picture 1: " before the image (the
+  training template has none).
+
+Keys to override from the .txt `--ref-image-args`: `fit_to_target=false`,
+`vlm_picture_labels=true` (previous behaviour), `vlm_size=1024` (the node's
+`grounding_px`; its README: higher = stronger likeness, lower = stronger edit).
+The log shows `krea2 reference params: ... fit to target yes, VLM picture labels no, VLM size 768-768`
+and `krea2 fit reference 0: WxH -> WxH (target WxH)`.
