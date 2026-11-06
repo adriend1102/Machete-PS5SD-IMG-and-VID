@@ -3,6 +3,29 @@
   // read too) and sd.cpp's JSON of the request in it (sdcpp). Files saved before 0.9.0 and upscales have none.
   var infoCache = {};
 
+  // The engine's sdcpp.generation/v1 (prompt, negative_prompt, sample_params) next to the fields
+  // the viewer reads (prompt.positive/negative, sampling), which images from older engines already
+  // have. Only adds what is missing, so old metadata is used as it is.
+  function withOldInfoFields(d) {
+    var j = d && d.sdcpp;
+    if (!j || typeof j !== 'object') return d;
+    if (typeof j.prompt === 'string' || (j.prompt == null && j.negative_prompt != null)) {
+      j.prompt = { positive: j.prompt || '', negative: j.negative_prompt || '' };
+    }
+    var sp = j.sample_params;
+    if (!j.sampling && sp && typeof sp === 'object') {
+      j.sampling = {
+        steps: sp.sample_steps, method: sp.sample_method, scheduler: sp.scheduler,
+        guidance: sp.guidance || {}, eta: sp.eta, flow_shift: sp.flow_shift
+      };
+    }
+    var ls = j.loras || [];
+    for (var i = 0; i < ls.length; i++) {
+      if (ls[i] && !ls[i].name && ls[i].path) ls[i].name = baseName(ls[i].path);
+    }
+    return d;
+  }
+
   function round2(x) { return Math.round(Number(x) * 100) / 100; }
 
   function baseName(path) { return String(path || '').split('/').pop(); }
@@ -46,7 +69,7 @@
       show('lb-info', false);
       $('lb').className = 'lb';
       req('GET', '/ps5sd/v1/gallery/info/' + encodeURIComponent(it.name), null, function (code, d) {
-        infoCache[it.name] = code === 200 && d ? d : {};
+        infoCache[it.name] = code === 200 && d ? withOldInfoFields(d) : {};
         var cur = st.lb >= 0 ? lbItem() : null;
         if (cur && cur.name === it.name) drawLbInfo(cur);
       });
