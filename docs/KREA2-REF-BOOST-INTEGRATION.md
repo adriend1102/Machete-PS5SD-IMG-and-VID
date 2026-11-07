@@ -112,3 +112,19 @@ Keys to override from the .txt `--ref-image-args`: `fit_to_target=false`,
 `grounding_px`; its README: higher = stronger likeness, lower = stronger edit).
 The log shows `krea2 reference params: ... fit to target yes, VLM picture labels no, VLM size 768-768`
 and `krea2 fit reference 0: WxH -> WxH (target WxH)`.
+
+## 2026-11-07: ref_boost and the reference encode without running out of memory (patch 0082)
+
+- The 4th run failing ("Not enough memory on the console for this run"): the
+  Qwen-Image VAE encode of a 1024x1536 reference asks for about 10 GB in one
+  piece. It fits on a fresh start, not after a request (about 1 GB stays taken
+  and the pool is split), and unlike the decode it was never retried tiled.
+  The encode now retries with smaller spatial tiles on an allocation failure,
+  like decode_first_stage.
+- ref_boost's bias with flash attention: every boosted query row has the same
+  bias over the keys, so the target queries run through flash attention in
+  chunks of 512 rows that share one [L_k, 512] F16 mask (about 12 MiB at
+  1024x1536) instead of a full [L, L] mask (311 MiB on the GPU and in the CPU
+  heap, which on the PS5 come from the same pool). Text and reference rows run
+  without a mask. Without flash attention the full mask is kept.
+  Checked on the CPU backend against a naive attention with the bias.
