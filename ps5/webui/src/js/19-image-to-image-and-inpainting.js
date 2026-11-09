@@ -6,7 +6,10 @@
   // is the start. A masked result is always blended back over the start image with a soft edge, so the
   // rest of the image stays exactly as it was, and saved to the gallery in place of the raw result.
   var INIT_MAX = 4096;
-  var me = { brush: 48, erase: false, down: false, last: null, scale: 1 };
+  // layer: 'mask' (what changes) or 'boost' (where Ref Boost applies, Krea2 edits by the prompt)
+  var me = { brush: 48, erase: false, down: false, last: null, scale: 1, layer: 'mask' };
+  var layerColor = { mask: 'rgb(255,48,48)', boost: 'rgb(48,200,96)' };
+  var layerRGB = { mask: [255, 48, 48], boost: [48, 200, 96] };
 
   function canvasOf(w, h) {
     var c = document.createElement('canvas');
@@ -75,6 +78,7 @@
     // Show Ref Boost on Create whenever Krea2 is loaded; it is sent only for edits
     // that use a reference image.
     show('ref-boost-row', /^Krea2/.test(loadedFamily()), 'flex');
+    show('boost-mask', false);
     if (i) {
       var k = Math.min(1, 240 / Math.max(i.canvas.width, i.canvas.height));
       var t = canvasOf(Math.max(1, Math.round(i.canvas.width * k)), Math.max(1, Math.round(i.canvas.height * k)));
@@ -83,6 +87,11 @@
       if (i.mask) {
         g.globalAlpha = 0.55;
         g.drawImage(i.mask, 0, 0, t.width, t.height);
+        g.globalAlpha = 1;
+      }
+      if (i.boost && ref) {
+        g.globalAlpha = 0.55;
+        g.drawImage(i.boost, 0, 0, t.width, t.height);
         g.globalAlpha = 1;
       }
       $('init-thumb').src = t.toDataURL('image/png');
@@ -96,6 +105,10 @@
       show('init-ref-row', refCapable(), 'flex');
       show('init-str-row', !ref, 'flex');
       show('init-mask', !ref || refMaskable(), 'inline-block');
+      show('boost-mask', ref && refMaskable(), 'inline-block');
+      text($('boost-mask'), i.boost
+        ? 'Ref Boost area: ' + Math.max(1, Math.round(i.boostPainted * 100)) + '% (edit)'
+        : 'Paint the Ref Boost area');
       show('init-crop-row', !!i.mask && !ref, 'flex');
       text($('init-hint'), ref && i.mask && refMaskable()
         ? 'Only the painted part is edited; the rest of the photo stays exactly as it is. Say what to change there, for example "a red bikini".'
@@ -171,10 +184,14 @@
   }
 
   // ---- the mask editor
-  function openMask() {
+  function openMask(layer) {
     var i = st.init;
     if (!i) return;
-    if (!i.mask) i.mask = canvasOf(i.canvas.width, i.canvas.height);
+    me.layer = layer === 'boost' ? 'boost' : 'mask';
+    if (!i[me.layer]) i[me.layer] = canvasOf(i.canvas.width, i.canvas.height);
+    text($('me-title'), me.layer === 'boost'
+      ? 'Paint what should stay like the reference (Ref Boost applies only there)'
+      : 'Paint over what should change');
     me.erase = false;
     text($('me-mode'), 'Erase');
     show('me', true, 'flex');
@@ -198,7 +215,7 @@
     g.clearRect(0, 0, cv.width, cv.height);
     g.drawImage(i.canvas, 0, 0, cv.width, cv.height);
     g.globalAlpha = 0.55;
-    g.drawImage(i.mask, 0, 0, cv.width, cv.height);
+    g.drawImage(i[me.layer], 0, 0, cv.width, cv.height);
     g.globalAlpha = 1;
   }
 
@@ -209,9 +226,9 @@
   }
 
   function strokeTo(pt) {
-    var g = st.init.mask.getContext('2d'), a = me.last || pt;
+    var g = st.init[me.layer].getContext('2d'), a = me.last || pt;
     g.globalCompositeOperation = me.erase ? 'destination-out' : 'source-over';
-    g.strokeStyle = 'rgb(255,48,48)';
+    g.strokeStyle = layerColor[me.layer];
     g.lineWidth = me.brush / me.scale;
     g.lineCap = 'round';
     g.lineJoin = 'round';
@@ -244,26 +261,28 @@
   function maskUp() { me.down = false; me.last = null; }
 
   function invertMask() {
-    var m = st.init.mask, g = m.getContext('2d'), d = g.getImageData(0, 0, m.width, m.height), a = d.data;
+    var m = st.init[me.layer], g = m.getContext('2d'), d = g.getImageData(0, 0, m.width, m.height), a = d.data;
+    var rgb = layerRGB[me.layer];
     for (var i = 0; i < a.length; i += 4) {
-      a[i] = 255; a[i + 1] = 48; a[i + 2] = 48; a[i + 3] = 255 - a[i + 3];
+      a[i] = rgb[0]; a[i + 1] = rgb[1]; a[i + 2] = rgb[2]; a[i + 3] = 255 - a[i + 3];
     }
     g.putImageData(d, 0, 0);
     drawMask();
   }
 
   function clearMask() {
-    var m = st.init.mask;
+    var m = st.init[me.layer];
     m.getContext('2d').clearRect(0, 0, m.width, m.height);
     drawMask();
   }
 
   function maskDone() {
-    var i = st.init, m = i.mask;
+    var i = st.init, m = i[me.layer];
     var a = m.getContext('2d').getImageData(0, 0, m.width, m.height).data, n = 0, on = 0;
     for (var k = 3; k < a.length; k += 64) { n++; if (a[k] > 127) on++; }
-    i.painted = n ? on / n : 0;
-    if (!on) i.mask = null;
+    if (me.layer === 'boost') i.boostPainted = n ? on / n : 0;
+    else i.painted = n ? on / n : 0;
+    if (!on) i[me.layer] = null;
     show('me', false);
     drawInit();
   }
@@ -435,11 +454,23 @@
     var ic = canvasOf(gw, gh);
     ic.getContext('2d').drawImage(i.canvas, box.x, box.y, box.w, box.h, 0, 0, gw, gh);
     var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref };
+    if (ref && i.boost && refMaskable()) out.boostGrid = boostGrid(i.boost, box, gw, gh);
     if (i.mask && (!ref || refMaskable())) {
       out.soft = softMask(i.mask, box, gw, gh);
       out.mask = out.soft.toDataURL('image/png');
     }
     return out;
+  }
+
+  // The Ref Boost area on the DiT's token grid (one cell a 16x16 pixel patch of the w x h made):
+  // "WxH:" then one hex digit a cell, its painted share 0-f, row major (ref_boost_mask).
+  function boostGrid(layer, box, w, h) {
+    var gw = Math.ceil(w / 16), gh = Math.ceil(h / 16), c = canvasOf(gw, gh), g = c.getContext('2d');
+    g.imageSmoothingEnabled = true;
+    g.drawImage(layer, box.x, box.y, box.w, box.h, 0, 0, gw, gh);
+    var a = g.getImageData(0, 0, gw, gh).data, s = gw + 'x' + gh + ':';
+    for (var k = 3; k < a.length; k += 4) s += Math.round(a[k] / 255 * 15).toString(16);
+    return s;
   }
 
   // A result blended over the start image where the mask is: the whole start image for "only the

@@ -131,6 +131,8 @@
           body.sample_params.extra_sample_args = 'strength_as_noise_level=true,force_first_sigma=true';
         }
         if (p.req.mask) body.mask_image = p.req.mask;
+        // Painted Ref Boost area: the boost applies there only (none painted: everywhere).
+        if (p.req.boostGrid) body.ref_image_args += ',ref_boost_mask=' + p.req.boostGrid;
       }
       body.width = p.req.w;
       body.height = p.req.h;
