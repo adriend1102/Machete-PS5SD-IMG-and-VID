@@ -119,11 +119,12 @@
       if (/^Krea2/.test(loadedFamily())) {
         body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
         // Ref Strength above 0: the edit starts from the photo at an exact noise level (not a
-        // whole number of steps): 0.995 at the low end down to 0.93 at 1. Krea2 settles the pose
-        // and the composition between about 0.98 and 0.94; much below that it returns the photo.
+        // whole number of steps): 0.999 at the low end down to 0.97 at 1. Starting at about
+        // 0.98 (6 of 8 steps) the photo already came back as is, at 1.0 the pose was redrawn,
+        // so the pose is settled in that narrow band.
         if (p.refKeep > 0) {
-          var noise = 0.995 - 0.065 * Math.min(1, p.refKeep);
-          body.ref_image_args += ',edit_strength=' + noise.toFixed(3);
+          var noise = 0.999 - 0.029 * Math.min(1, p.refKeep);
+          body.ref_image_args += ',edit_strength=' + noise.toFixed(4);
           body.sample_params.extra_sample_args = 'strength_as_noise_level=true,force_first_sigma=true';
         }
       }
