@@ -260,6 +260,16 @@ std::atomic<bool> g_switching{false};
 // direct memory pool splits it (one 10.9 GiB block becomes 12, the largest
 // 8.1 GiB), and a model that fits after a fresh start then streams its weights.
 std::atomic<bool> g_relaunch{false};
+
+// A model conversion on the console (POST /ps5sd/v1/app/convert): sd.cpp's
+// streaming convert, run here because the weights (25 GB in bf16) are slow to
+// move to a PC and back over the network.
+std::mutex  g_convert_mutex;
+bool        g_convert_running = false;
+std::string g_convert_state   = "idle";  // idle, running, done, failed
+std::string g_convert_input;
+std::string g_convert_output;
+std::string g_convert_type;
 // The server runs without a model (sd-server --standby, patches/sdcpp/0056).
 std::atomic<bool> g_standby{false};
 
@@ -2032,6 +2042,46 @@ extern "C" int sd_app_request(const char * method, const char * path, const char
             out    = error_json(err);
             status = 400;
         }
+    } else if (m == "POST" && p == "convert") {
+        const nlohmann::json j = nlohmann::json::parse(body != nullptr ? std::string(body, body_len) : std::string(), nullptr, false);
+        auto field = [&](const char * key, const char * fallback) {
+            return j.is_object() && j.contains(key) && j[key].is_string() ? j[key].get<std::string>() : std::string(fallback);
+        };
+        auto under_models = [](const std::string & path) { return !path.empty() && path[0] == '/' ? path : kModels + "/" + path; };
+        const std::string input  = field("input", "");
+        const std::string output = field("output", "");
+        const std::string type   = field("type", "q5_K");
+        const std::string rules  = field("rules", "");
+        const sd_type_t   t      = str_to_sd_type(type.c_str());
+        std::lock_guard<std::mutex> lock(g_convert_mutex);
+        if (input.empty() || output.empty() || t == SD_TYPE_COUNT) {
+            out    = error_json("give input, output (paths under models/ or absolute) and a type such as q5_K");
+            status = 400;
+        } else if (g_convert_running) {
+            out    = error_json("a conversion is running: " + g_convert_output);
+            status = 409;
+        } else {
+            g_convert_running = true;
+            g_convert_state   = "running";
+            g_convert_input   = under_models(input);
+            g_convert_output  = under_models(output);
+            g_convert_type    = type;
+            std::printf("ps5sd: convert %s -> %s (%s)\n", g_convert_input.c_str(), g_convert_output.c_str(), type.c_str());
+            std::thread([in = g_convert_input, dst = g_convert_output, t, rules]() {
+                const bool ok = convert_with_components(in.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr, dst.c_str(), t,
+                                                        rules.empty() ? nullptr : rules.c_str(), false, 2, nullptr, 0);
+                std::printf("ps5sd: convert %s: %s\n", dst.c_str(), ok ? "done" : "failed");
+                std::lock_guard<std::mutex> lock(g_convert_mutex);
+                g_convert_running = false;
+                g_convert_state   = ok ? "done" : "failed";
+            }).detach();
+            out    = nlohmann::json{ { "state", "running" }, { "input", g_convert_input }, { "output", g_convert_output } }.dump();
+            status = 202;
+        }
+    } else if (m == "GET" && p == "convert") {
+        std::lock_guard<std::mutex> lock(g_convert_mutex);
+        out    = nlohmann::json{ { "state", g_convert_state }, { "input", g_convert_input }, { "output", g_convert_output }, { "type", g_convert_type } }.dump();
+        status = 200;
     } else if (m == "GET" && p == "face/status") {
         out    = FaceStudio::instance().status_json();
         status = 200;
