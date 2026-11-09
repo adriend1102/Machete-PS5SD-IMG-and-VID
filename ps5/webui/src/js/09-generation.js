@@ -118,11 +118,11 @@
       body.ref_images = [p.req.init];
       if (/^Krea2/.test(loadedFamily())) {
         body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
-        // Ref Strength above 0: the edit starts from the photo, the engine's edit_strength being
-        // 1 - Ref Strength, never less than one step; 0 is not sent
+        // Ref Strength above 0: the edit starts from the photo. The engine's edit_strength goes
+        // from 1 (0, not sent) down to 0.55 (1): the first, noisiest steps are where Krea2 makes
+        // the large changes, and below about 0.55 it skips them and returns the photo almost as is.
         if (p.refKeep > 0) {
-          var steps = Math.max(1, p.steps || 1);
-          var es = Math.max(1 - p.refKeep, Math.ceil(1000 / steps) / 1000);
+          var es = 1 - 0.45 * Math.min(1, p.refKeep);
           if (es < 1) body.ref_image_args += ',edit_strength=' + es.toFixed(3);
         }
       }
