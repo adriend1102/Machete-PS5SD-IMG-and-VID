@@ -260,9 +260,21 @@ ModelEntry ModelLibrary::parse_preset(const std::string & id, const std::string 
             }
             continue;
         }
-        // A relative path after a model option comes from the models directory.
+        // A relative path after a model option comes from the models directory, or from the
+        // other model directories (internal storage, USB) when the file was downloaded to one
+        // of them while it was the active storage.
         if (!e.args.empty() && is_model_path_option(e.args.back()) && line[0] != '/' && line[0] != '-') {
-            line = (fs::u8path(models_dir) / fs::u8path(line)).lexically_normal().u8string();
+            const std::string relative = line;
+            line                       = (fs::u8path(models_dir) / fs::u8path(relative)).lexically_normal().u8string();
+            if (!is_file(fs::u8path(line))) {
+                for (const auto & dir : extra_models_dirs) {
+                    const fs::path candidate = (fs::u8path(dir) / fs::u8path(relative)).lexically_normal();
+                    if (!dir.empty() && is_file(candidate)) {
+                        line = candidate.u8string();
+                        break;
+                    }
+                }
+            }
         }
         e.args.push_back(line);
     }
