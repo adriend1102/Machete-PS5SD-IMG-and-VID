@@ -118,12 +118,13 @@
       body.ref_images = [p.req.init];
       if (/^Krea2/.test(loadedFamily())) {
         body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
-        // Ref Strength above 0: the edit starts from the photo. The engine's edit_strength goes
-        // from 1 (0, not sent) down to 0.55 (1): the first, noisiest steps are where Krea2 makes
-        // the large changes, and below about 0.55 it skips them and returns the photo almost as is.
+        // Ref Strength above 0: the edit starts from the photo at an exact noise level (not a
+        // whole number of steps): 0.995 at the low end down to 0.93 at 1. Krea2 settles the pose
+        // and the composition between about 0.98 and 0.94; much below that it returns the photo.
         if (p.refKeep > 0) {
-          var es = 1 - 0.45 * Math.min(1, p.refKeep);
-          if (es < 1) body.ref_image_args += ',edit_strength=' + es.toFixed(3);
+          var noise = 0.995 - 0.065 * Math.min(1, p.refKeep);
+          body.ref_image_args += ',edit_strength=' + noise.toFixed(3);
+          body.sample_params.extra_sample_args = 'strength_as_noise_level=true,force_first_sigma=true';
         }
       }
       body.width = p.req.w;
