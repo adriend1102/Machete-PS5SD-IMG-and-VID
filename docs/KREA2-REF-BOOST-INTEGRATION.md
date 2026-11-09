@@ -141,3 +141,17 @@ img2img, so what the prompt does not ask to change stays. The web UI's
 **Edit strength** field (next to Ref Boost, default 1) sends it only below 1.
 The log shows `krea2 edit strength 0.60: the reference is also the starting image`
 and `edit strength 0.60: starting from reference 0`.
+
+## 2026-11-09: NVFP4 file whose quantization metadata has no tensor prefix (patch 0084)
+
+BigLoveKreaEdit3_nvfp4.safetensors lists its quantized layers in
+`_quantization_metadata` as `blocks.0.attn.wq`, while its tensors are
+`model.diffusion_model.blocks.0.attn.wq.weight`. The loader did not match them:
+the NVFP4 weights were dropped, their block scales loaded as plain tensors, and
+Linear aborted (`GGML_ASSERT(scale_nelements == 1 || scale_nelements == out_features)`),
+closing the app while loading. A metadata layer whose name has no `.weight`
+tensor is now matched with the `model.diffusion_model.`, `diffusion_model.` or
+`model.` prefix. Checked on the real headers of the five BigLoveKreaEdit3
+files: nvfp4 now 261 block-quantized layers (258 nvfp4 + 3 fp8) and no stray
+scales; int4 (256), mxfp8 (261), fp8mixed (261) and int8 (224 int8_tensorwise)
+unchanged.

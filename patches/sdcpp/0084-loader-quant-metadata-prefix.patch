@@ -1,0 +1,38 @@
+diff --git a/src/model_io/safetensors_io.cpp b/src/model_io/safetensors_io.cpp
+index 4bf6b29..294d552 100644
+--- a/src/model_io/safetensors_io.cpp
++++ b/src/model_io/safetensors_io.cpp
+@@ -493,15 +493,30 @@ bool read_safetensors_file(const std::string& file_path,
+                 const auto layers         = json.find("layers");
+                 if (layers != json.end() && layers->is_object()) {
+                     for (const auto& layer : layers->items()) {
+-                        if (!layer.value().is_object() || comfy_quant_configs.count(layer.key())) {
++                        if (!layer.value().is_object()) {
++                            continue;
++                        }
++                        // Some files list their layers without the prefix their tensors carry
++                        // (BigLoveKreaEdit3 nvfp4: "blocks.0.attn.wq" for
++                        // "model.diffusion_model.blocks.0.attn.wq.weight").
++                        std::string module_name = layer.key();
++                        if (header_.find(module_name + ".weight") == header_.end()) {
++                            for (const char* prefix : {"model.diffusion_model.", "diffusion_model.", "model."}) {
++                                if (header_.find(prefix + module_name + ".weight") != header_.end()) {
++                                    module_name = prefix + module_name;
++                                    break;
++                                }
++                            }
++                        }
++                        if (comfy_quant_configs.count(module_name)) {
+                             continue;
+                         }
+                         ComfyQuantConfig config;
+                         parse_comfy_quant_json(layer.value(), config);
+-                        if (!supported_comfy_quant(config, layer.key(), file_path, error)) {
++                        if (!supported_comfy_quant(config, module_name, file_path, error)) {
+                             return false;
+                         }
+-                        comfy_quant_configs.emplace(layer.key(), std::move(config));
++                        comfy_quant_configs.emplace(module_name, std::move(config));
+                     }
+                 }
+             } catch (const std::exception&) {
