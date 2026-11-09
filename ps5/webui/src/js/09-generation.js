@@ -116,7 +116,11 @@
     if (loraBody(p).length) body.lora = loraBody(p);
     if (p.req && p.req.ref) {
       body.ref_images = [p.req.init];
-      if (/^Krea2/.test(loadedFamily())) body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
+      if (/^Krea2/.test(loadedFamily())) {
+        body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
+        // below 1: the edit starts from the photo (the engine's edit_strength); 1 is not sent
+        if (p.editStrength > 0 && p.editStrength < 1) body.ref_image_args += ',edit_strength=' + String(p.editStrength);
+      }
       body.width = p.req.w;
       body.height = p.req.h;
     } else if (p.req) {
