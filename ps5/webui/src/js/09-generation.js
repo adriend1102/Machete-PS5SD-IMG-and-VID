@@ -122,11 +122,15 @@
         // whole number of steps): 0.999 at the low end down to 0.97 at 1. Starting at about
         // 0.98 (6 of 8 steps) the photo already came back as is, at 1.0 the pose was redrawn,
         // so the pose is settled in that narrow band.
-        if (p.refKeep > 0) {
-          var noise = 0.999 - 0.029 * Math.min(1, p.refKeep);
+        // A mask also needs the photo as the starting image, so that the part left unpainted is
+        // kept: at Ref Strength 0 it starts from (almost) pure noise, which redraws the painted part
+        // freely.
+        if (p.refKeep > 0 || p.req.mask) {
+          var noise = p.refKeep > 0 ? 0.999 - 0.029 * Math.min(1, p.refKeep) : 0.9999;
           body.ref_image_args += ',edit_strength=' + noise.toFixed(4);
           body.sample_params.extra_sample_args = 'strength_as_noise_level=true,force_first_sigma=true';
         }
+        if (p.req.mask) body.mask_image = p.req.mask;
       }
       body.width = p.req.w;
       body.height = p.req.h;

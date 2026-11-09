@@ -64,6 +64,9 @@
   // FLUX.2 and Krea2 edits by the prompt use the start image as a reference.
   function refCapable() { return /^FLUX\.2|^Krea2/.test(loadedFamily()); }
   function refEdit() { return !!st.init && refCapable() && $('init-ref').checked; }
+  // A Krea2 edit by the prompt can take a mask too: only the painted part is edited, the rest
+  // of the photo stays as it is (the edit starts from the photo, see imageBody).
+  function refMaskable() { return /^Krea2/.test(loadedFamily()); }
 
   function drawInit() {
     var i = st.init, ref = refEdit();
@@ -83,16 +86,20 @@
         g.globalAlpha = 1;
       }
       $('init-thumb').src = t.toDataURL('image/png');
-      text($('init-meta'), i.canvas.width + '×' + i.canvas.height + ' · ' + (ref
+      text($('init-meta'), i.canvas.width + '×' + i.canvas.height + ' · ' + (ref && i.mask && refMaskable()
+        ? 'a reference, ' + Math.max(1, Math.round(i.painted * 100)) + '% masked: only that part is edited'
+        : ref
         ? 'a reference: the prompt says what changes'
         : i.mask ? Math.max(1, Math.round(i.painted * 100)) + '% masked: only that part changes'
         : 'no mask: the whole image changes'));
       text($('init-mask'), i.mask ? 'Edit the mask' : 'Paint a mask');
       show('init-ref-row', refCapable(), 'flex');
       show('init-str-row', !ref, 'flex');
-      show('init-mask', !ref, 'inline-block');
+      show('init-mask', !ref || refMaskable(), 'inline-block');
       show('init-crop-row', !!i.mask && !ref, 'flex');
-      text($('init-hint'), ref
+      text($('init-hint'), ref && i.mask && refMaskable()
+        ? 'Only the painted part is edited; the rest of the photo stays exactly as it is. Say what to change there, for example "a red bikini".'
+        : ref
         ? 'Say what to change, for example "the same house in winter, snow on the roof". The layout and the rest stay. ' +
           'It takes longer than an image of its own: about a minute at 4 steps, two at 8.'
         : i.mask && $('init-crop').checked
@@ -428,7 +435,7 @@
     var ic = canvasOf(gw, gh);
     ic.getContext('2d').drawImage(i.canvas, box.x, box.y, box.w, box.h, 0, 0, gw, gh);
     var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref };
-    if (i.mask && !ref) {
+    if (i.mask && (!ref || refMaskable())) {
       out.soft = softMask(i.mask, box, gw, gh);
       out.mask = out.soft.toDataURL('image/png');
     }
