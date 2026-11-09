@@ -162,6 +162,9 @@ constexpr const char * kHomebrewBaseDir = "/data/homebrew";
 constexpr const char * kHomebrewDir     = "/data/homebrew/PPSA99699";
 constexpr const char * kHomebrewLog     = "/data/homebrew/PPSA99699/app.log";
 constexpr const char * kHomebrewCrashLog= "/data/homebrew/PPSA99699/crash.log";
+// The storage a relaunch for a model switch left from (a USB drive is not the
+// default), read once by the next start.
+constexpr const char * kRelaunchBase    = "/data/homebrew/PS5SD-relaunch-base.txt";
 constexpr const char * kDocs            = "/app0/docs";  // the Help tab's docs (scripts/build-app.sh)
 #ifndef PS5SD_NO_DISPLAY
 constexpr const char * kFont    = "/app0/assets/fonts/dejavu-sans-mono.huifont";
@@ -627,6 +630,10 @@ void quit_if_asked() {
     sync_app_logs();
     if (g_relaunch) {
         // model.txt already names the new model, which the next start loads.
+        {
+            std::ofstream base(kRelaunchBase, std::ios::trunc);
+            base << kDir << "\n";
+        }
         const int rc = sceSystemServiceLoadExec("/app0/eboot.bin", nullptr);
         std::printf("ps5sd: relaunch refused (0x%x); closing, open PS5SD again\n", (unsigned) rc);
         std::fflush(nullptr);
@@ -2530,6 +2537,14 @@ void scan_initial_gallery() {
 
 int main(int, char **) {
     StorageManager::instance().init();
+    {
+        const auto relaunch = read_lines(kRelaunchBase);
+        unlink(kRelaunchBase);
+        struct stat st;
+        if (!relaunch.empty() && !relaunch[0].empty() && stat(relaunch[0].c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+            StorageManager::instance().init(relaunch[0]);
+        }
+    }
     update_storage_paths();
     FaceStudio::instance().init(StorageManager::instance().faces_dir(), StorageManager::instance().models_dir());
 
