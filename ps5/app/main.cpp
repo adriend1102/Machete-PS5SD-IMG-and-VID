@@ -252,6 +252,11 @@ std::atomic<bool> g_quit_file{false};  // kQuit seen by watch_quit_file()
 std::atomic<bool> g_switch_pending{false};
 std::atomic<bool> g_restart{false};
 std::atomic<bool> g_switching{false};
+// A switch from a model that has been loaded relaunches the title instead of
+// restarting the server in this process: what a stopped server leaves in the
+// direct memory pool splits it (one 10.9 GiB block becomes 12, the largest
+// 8.1 GiB), and a model that fits after a fresh start then streams its weights.
+std::atomic<bool> g_relaunch{false};
 // The server runs without a model (sd-server --standby, patches/sdcpp/0056).
 std::atomic<bool> g_standby{false};
 
@@ -595,7 +600,7 @@ void quit_if_asked() {
     using clock = std::chrono::steady_clock;
     static clock::time_point asked;
     if (!g_quit_requested) {
-        if (!g_quit_file) {
+        if (!g_quit_file && !g_relaunch) {
             return;
         }
         g_quit_requested = true;
@@ -620,6 +625,13 @@ void quit_if_asked() {
     }
     std::fflush(nullptr);
     sync_app_logs();
+    if (g_relaunch) {
+        // model.txt already names the new model, which the next start loads.
+        const int rc = sceSystemServiceLoadExec("/app0/eboot.bin", nullptr);
+        std::printf("ps5sd: relaunch refused (0x%x); closing, open PS5SD again\n", (unsigned) rc);
+        std::fflush(nullptr);
+        sync_app_logs();
+    }
     sceSystemServiceLoadExec("exit", nullptr);
 }
 
@@ -1177,6 +1189,12 @@ void run_server() {
 void switch_if_asked() {
     if (!g_switch_pending.exchange(false) || g_quit_requested) {
         return;
+    }
+    if (g_model_loads > 0) {
+        std::printf("ps5sd: switching the model by relaunching PS5SD\n");
+        set_phase("Switching the model", "PS5SD restarts with the new model");
+        g_relaunch = true;
+        return;  // quit_if_asked() stops the server and relaunches
     }
     g_restart = true;
     if (g_server_started && !g_server_done) {
