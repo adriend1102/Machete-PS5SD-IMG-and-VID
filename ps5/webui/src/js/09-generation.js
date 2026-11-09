@@ -118,8 +118,13 @@
       body.ref_images = [p.req.init];
       if (/^Krea2/.test(loadedFamily())) {
         body.ref_image_args = 'ref_boost=' + String(p.refBoost || 1.0);
-        // below 1: the edit starts from the photo (the engine's edit_strength); 1 is not sent
-        if (p.editStrength > 0 && p.editStrength < 1) body.ref_image_args += ',edit_strength=' + String(p.editStrength);
+        // Ref Strength above 0: the edit starts from the photo, the engine's edit_strength being
+        // 1 - Ref Strength, never less than one step; 0 is not sent
+        if (p.refKeep > 0) {
+          var steps = Math.max(1, p.steps || 1);
+          var es = Math.max(1 - p.refKeep, Math.ceil(1000 / steps) / 1000);
+          if (es < 1) body.ref_image_args += ',edit_strength=' + es.toFixed(3);
+        }
       }
       body.width = p.req.w;
       body.height = p.req.h;
@@ -201,11 +206,25 @@
     });
   }
 
+  // A phone that locks its screen or puts the page in the background can drop the last poll
+  // (the finished job carries the image) and slows the retries down; back on the page, the job
+  // is asked for at once instead of waiting.
+  var pollTimer = 0, pollBusy = false;
+  function schedulePoll() { pollTimer = setTimeout(function () { pollTimer = 0; pollJob(); }, 1000); }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden || !st.job || pollBusy || !pollTimer) return;
+    clearTimeout(pollTimer);
+    pollTimer = 0;
+    pollJob();
+  });
+
   function pollJob() {
     var token = st.token;
     var job = st.job;
     if (!job) return;
+    pollBusy = true;
     req('GET', '/sdcpp/v1/jobs/' + job, null, function (code, data) {
+      pollBusy = false;
       if (token !== st.token) return;
       if (code === 0) {
         st.fails++;
@@ -213,13 +232,13 @@
         setPill();
         if (st.fails > 300) { fail('Lost the connection to the server.'); return; }
         status('Connection lost, retrying…');
-        setTimeout(pollJob, 1000);
+        schedulePoll();
         return;
       }
       st.fails = 0;
       if (!st.online) { st.online = true; setPill(); }
       if (code === 404 || code === 410) { fail('The server no longer has this job.'); return; }
-      if (!data) { setTimeout(pollJob, 1000); return; }
+      if (!data) { schedulePoll(); return; }
       // a run of several images on the server: its count, and the images it has saved
       if (data.repeat && data.repeat.total > 1) syncRun(data.repeat);
       var served = !!(st.run && st.run.server);
@@ -262,7 +281,7 @@
           showRunNewest();
         }
       }
-      setTimeout(pollJob, 1000);
+      schedulePoll();
     });
   }
 
