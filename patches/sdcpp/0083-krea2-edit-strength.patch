@@ -1,0 +1,72 @@
+diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
+index 6b2dfd5..77bb960 100644
+--- a/src/model/diffusion/model.hpp
++++ b/src/model/diffusion/model.hpp
+@@ -43,6 +43,9 @@ struct RefImageParams {
+     // the /16 grid) and its tokens sit stride-1 at a centered offset on the target's positions.
+     bool ref_fit_to_target  = false;
+     bool vlm_picture_labels = true;  // "Picture N: " before each image in the VLM prompt
++    // Below 1: the first reference is also the starting image, denoised from this strength
++    // (as img2img) instead of from pure noise, so what the prompt does not ask to change stays.
++    float edit_strength = 1.0f;
+ };
+ 
+ const std::unordered_map<std::string, RefImageParams> REF_IMAGE_PRESETS = {
+diff --git a/src/pipeline/diffusion_engine.cpp b/src/pipeline/diffusion_engine.cpp
+index 4472f29..cd6ba7d 100644
+--- a/src/pipeline/diffusion_engine.cpp
++++ b/src/pipeline/diffusion_engine.cpp
+@@ -3169,6 +3169,14 @@ RefImageParams StableDiffusionGGML::resolve_ref_image_params(const char* ref_ima
+                 LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
+                 rejected_keys.insert(key);
+             }
++        } else if (key == "edit_strength") {
++            float strength = 0.0f;
++            if (!parse_strict_float(value, strength) || !std::isfinite(strength) || strength <= 0.0f || strength > 1.0f) {
++                LOG_WARN("ignoring invalid reference image arg '%s=%s' (0 < edit_strength <= 1)", key.c_str(), value.c_str());
++                rejected_keys.insert(key);
++            } else {
++                params.edit_strength = strength;
++            }
+         } else if (key == "fit_to_target") {
+             if (!parse_strict_bool(value, params.ref_fit_to_target)) {
+                 LOG_WARN("ignoring invalid reference image arg '%s=%s'", key.c_str(), value.c_str());
+@@ -3288,6 +3296,9 @@ RefImageParams StableDiffusionGGML::resolve_ref_image_params(const char* ref_ima
+                  preset_name.c_str(), params.ref_boost, params.force_ref_timestep_zero ? "yes" : "no",
+                  params.ref_fit_to_target ? "yes" : "no", params.vlm_picture_labels ? "yes" : "no",
+                  params.vlm_min_size, params.vlm_max_size);
++        if (params.edit_strength < 1.0f) {
++            LOG_INFO("krea2 edit strength %.2f: the reference is also the starting image", params.edit_strength);
++        }
+     }
+     return params;
+ }
+diff --git a/src/pipeline/image.cpp b/src/pipeline/image.cpp
+index 8368566..5860062 100644
+--- a/src/pipeline/image.cpp
++++ b/src/pipeline/image.cpp
+@@ -192,7 +192,14 @@ namespace sd::pipeline {
+         sd::Tensor<float> mask_image_tensor;
+         int image_channels = sd->get_image_channels();
+ 
+-        if (sd_img_gen_params->init_image.data != nullptr) {
++        const sd_image_t* init_source = sd_img_gen_params->init_image.data != nullptr ? &sd_img_gen_params->init_image : nullptr;
++        if (init_source == nullptr && ref_image_params.edit_strength < 1.0f && sd_img_gen_params->ref_images_count > 0 &&
++            sd_img_gen_params->ref_images[0].data != nullptr) {
++            init_source       = &sd_img_gen_params->ref_images[0];
++            request->strength = ref_image_params.edit_strength;
++            LOG_INFO("edit strength %.2f: starting from reference 0", request->strength);
++        }
++        if (init_source != nullptr) {
+             LOG_INFO("IMG2IMG");
+ 
+             if (request->strength < 1.f) {
+@@ -250,7 +257,7 @@ namespace sd::pipeline {
+                 plan->sample_steps = static_cast<int>(plan->sigmas.size() - 1);
+             }
+ 
+-            init_image_tensor = ensure_image_tensor_channels(sd_image_to_tensor(sd_img_gen_params->init_image, request->width, request->height),
++            init_image_tensor = ensure_image_tensor_channels(sd_image_to_tensor(*init_source, request->width, request->height),
+                                                              image_channels);
+         }
+ 

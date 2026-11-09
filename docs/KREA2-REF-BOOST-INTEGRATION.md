@@ -128,3 +128,16 @@ and `krea2 fit reference 0: WxH -> WxH (target WxH)`.
   heap, which on the PS5 come from the same pool). Text and reference rows run
   without a mask. Without flash attention the full mask is kept.
   Checked on the CPU backend against a naive attention with the bias.
+
+## 2026-11-09: optional edit strength (patch 0083, web UI d278b4d)
+
+Krea2 edits start from pure noise: the reference only guides through attention
+(and ref_boost). People keep their identity (the Identity Edit training), but
+scenes without one get redrawn even when the prompt asks for a small change.
+
+`edit_strength=<0..1>` in `ref_image_args` (default 1, unchanged): below 1 the
+first reference is also the starting image, denoised from that strength as in
+img2img, so what the prompt does not ask to change stays. The web UI's
+**Edit strength** field (next to Ref Boost, default 1) sends it only below 1.
+The log shows `krea2 edit strength 0.60: the reference is also the starting image`
+and `edit strength 0.60: starting from reference 0`.
