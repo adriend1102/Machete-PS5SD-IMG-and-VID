@@ -12,7 +12,10 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
+#include <unordered_map>
 #include <utility>
+#include <vector>
 
 namespace ps5sd {
 
@@ -313,14 +316,27 @@ void Dashboard::sync_preview(const AppStatus::Snapshot & s) {
 // decoded one per frame (a 1024 px PNG takes a few tens of milliseconds on
 // the console; one a frame keeps a burst of results from stalling it).
 void Dashboard::sync_pictures(const AppStatus::Snapshot & s) {
-    const std::size_t keep = std::min<std::size_t>(s.recent.size(), 64);
+    const std::size_t keep = std::min<std::size_t>(s.recent.size(), AppStatus::kResults);
+    bool same = pictures_.size() == keep;
+    for (std::size_t i = 0; same && i < keep; i++) {
+        same = pictures_[i].path == s.recent[i].path;
+    }
+    if (!same) {
+    // Matched by path through a map: the list holds every creation, and a
+    // search of the whole list for each of them would cost a lot every frame.
+    std::unordered_map<std::string, std::size_t> old;
+    old.reserve(pictures_.size());
+    for (std::size_t i = 0; i < pictures_.size(); i++) {
+        old.emplace(pictures_[i].path, i);
+    }
+    std::vector<bool> taken(pictures_.size(), false);
     std::vector<Picture> next;
     for (std::size_t i = 0; i < keep; i++) {
         const AppStatus::Result & wanted = s.recent[i];
-        auto it = std::find_if(pictures_.begin(), pictures_.end(), [&](const Picture & p) { return p.path == wanted.path; });
-        if (it != pictures_.end()) {
-            next.push_back(std::move(*it));
-            pictures_.erase(it);
+        auto it = old.find(wanted.path);
+        if (it != old.end() && !taken[it->second]) {
+            taken[it->second] = true;
+            next.push_back(std::move(pictures_[it->second]));
         } else {
             Picture p;
             p.path = wanted.path;
@@ -328,11 +344,18 @@ void Dashboard::sync_pictures(const AppStatus::Snapshot & s) {
         }
         next.back().prompt = wanted.prompt;
     }
-    for (Picture & gone : pictures_) {  // what fell out of the list
-        release(gone.thumb);
-        release(gone.large);
+    for (std::size_t i = 0; i < pictures_.size(); i++) {  // what fell out of the list
+        if (!taken[i]) {
+            release(pictures_[i].thumb);
+            release(pictures_[i].large);
+        }
     }
     pictures_ = std::move(next);
+    } else {
+        for (std::size_t i = 0; i < keep; i++) {
+            pictures_[i].prompt = s.recent[i].prompt;
+        }
+    }
 
     const int target_idx = (!pictures_.empty())
                                ? std::clamp(selected_picture_index_, 0, static_cast<int>(pictures_.size()) - 1)
@@ -362,12 +385,31 @@ void Dashboard::sync_pictures(const AppStatus::Snapshot & s) {
         }
     }
 
-    // 2. Decode missing thumbnails (one per frame)
-    for (std::size_t i = 0; i < pictures_.size(); i++) {
-        Picture & p = pictures_[i];
-        if (p.failed || p.thumb.id != 0) {
+    // 2. Thumbnails only around the selection (the strip shows kThumbs of them):
+    // the rest are let go, so a gallery of hundreds costs what one of a few
+    // dozen did. Missing ones are decoded one a frame, nearest first.
+    const int total = static_cast<int>(pictures_.size());
+    const int sel   = std::max(0, target_idx);
+    const int lo    = std::max(0, sel - 3 * kThumbs);
+    const int hi    = std::min(total, sel + 3 * kThumbs + 1);
+    for (int i = 0; i < total; i++) {
+        if ((i < lo || i >= hi) && i != 0) {
+            release(pictures_[(std::size_t) i].thumb);
+        }
+    }
+    for (int d = 0; d <= 3 * kThumbs; d++) {
+        const int cand[2] = { sel - d, sel + d };
+        int i = -1;
+        for (int c : cand) {
+            if (c >= lo && c < hi && !pictures_[(std::size_t) c].failed && pictures_[(std::size_t) c].thumb.id == 0) {
+                i = c;
+                break;
+            }
+        }
+        if (i < 0) {
             continue;
         }
+        Picture & p = pictures_[(std::size_t) i];
         Rgba image;
         if (load_image_rgba(p.path, 256, image)) {
             upload(p.thumb, image.width, image.height, image.pixels.data());

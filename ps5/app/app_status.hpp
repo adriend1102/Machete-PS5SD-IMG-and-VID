@@ -113,7 +113,13 @@ class AppStatus {
 
   private:
     static constexpr std::size_t kLines   = 24;
-    static constexpr std::size_t kResults = 64;
+  public:
+    // Every creation in outputs/ is listed (the TV's gallery decodes only the
+    // thumbnails near the selection, dashboard.cpp); the cap only bounds a
+    // runaway folder.
+    static constexpr std::size_t kResults = 8192;
+
+  private:
     mutable std::mutex           mutex_;
     Snapshot                     s_;
     std::deque<std::string>      lines_;
