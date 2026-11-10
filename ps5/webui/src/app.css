@@ -662,6 +662,13 @@
     .hfile .fn { flex-basis: 100%; }
     .hfile .sz { margin-left: 0; flex: 1; }
 
+    /* Mask editor on a phone: the buttons wrap above, the picture takes the rest of the screen */
+    #me.lb { flex-direction: column; flex-wrap: nowrap; overflow: hidden; }
+    #me .lb-bar { display: flex; flex-wrap: wrap; gap: 0.4rem; padding: 0.5rem; }
+    #me .lb-title { order: 0; flex: 1 1 100%; padding: 0 0.25rem; }
+    #me .lb-bar button { padding: 0 0.7rem; min-height: 2.5rem; }
+    #me .me-body { flex: 1 1 auto; min-height: 0; padding: 0.25rem; }
+
     /* Mobile Lightbox */
     .lb { flex-direction: row; flex-wrap: wrap; align-content: flex-start; overflow-y: auto; }
     .lb-bar { display: contents; }

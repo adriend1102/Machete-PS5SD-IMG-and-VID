@@ -184,24 +184,56 @@
   }
 
   // ---- the mask editor
+  // Both layers (red: what changes, green: the Ref Boost area) are painted in this one editor
+  // for a Krea2 edit by the prompt; otherwise only the red one.
+  function bothLayers() { return refEdit() && refMaskable(); }
+
+  function setLayer(layer) {
+    var i = st.init;
+    me.layer = layer === 'boost' && bothLayers() ? 'boost' : 'mask';
+    if (!i[me.layer]) i[me.layer] = canvasOf(i.canvas.width, i.canvas.height);
+    text($('me-title'), me.layer === 'boost'
+      ? 'Green: what should stay like the reference (Ref Boost applies only there)'
+      : 'Red: paint over what should change');
+    text($('me-layer'), me.layer === 'boost' ? 'Painting green · switch to red' : 'Painting red · switch to green');
+    text($('me-fill'), me.layer === 'boost' ? 'Rest in red' : 'Rest in green');
+    $('me-layer').style.borderColor = layerColor[me.layer];
+    if ($('me').style.display !== 'none') drawMask();
+  }
+
   function openMask(layer) {
     var i = st.init;
     if (!i) return;
-    me.layer = layer === 'boost' ? 'boost' : 'mask';
-    if (!i[me.layer]) i[me.layer] = canvasOf(i.canvas.width, i.canvas.height);
-    text($('me-title'), me.layer === 'boost'
-      ? 'Paint what should stay like the reference (Ref Boost applies only there)'
-      : 'Paint over what should change');
+    show('me-layer', bothLayers(), 'inline-block');
+    show('me-fill', bothLayers(), 'inline-block');
     me.erase = false;
     text($('me-mode'), 'Erase');
     show('me', true, 'flex');
+    setLayer(layer);
     sizeMask();
+  }
+
+  function switchLayer() { setLayer(me.layer === 'boost' ? 'mask' : 'boost'); }
+
+  // The other layer becomes everything this one does not cover: paint the face green, then
+  // "Rest in red" makes all the rest the part that changes (and the other way round).
+  function fillOther() {
+    var i = st.init, other = me.layer === 'boost' ? 'mask' : 'boost';
+    var src = i[me.layer], W = src.width, H = src.height;
+    if (!i[other]) i[other] = canvasOf(W, H);
+    var a = src.getContext('2d').getImageData(0, 0, W, H).data;
+    var g = i[other].getContext('2d'), d = g.createImageData(W, H), o = d.data, rgb = layerRGB[other];
+    for (var k = 0; k < o.length; k += 4) {
+      o[k] = rgb[0]; o[k + 1] = rgb[1]; o[k + 2] = rgb[2]; o[k + 3] = 255 - a[k + 3];
+    }
+    g.putImageData(d, 0, 0);
+    drawMask();
   }
 
   function sizeMask() {
     var i = st.init, cv = $('me-canvas'), body = $('me-body');
     if (!i || $('me').style.display === 'none') return;
-    var bw = Math.max(100, body.clientWidth - 32), bh = Math.max(100, body.clientHeight - 16);
+    var bw = Math.max(100, body.clientWidth - 16), bh = Math.max(100, body.clientHeight - 8);
     var k = Math.min(bw / i.canvas.width, bh / i.canvas.height);
     cv.width = Math.max(1, Math.round(i.canvas.width * k));
     cv.height = Math.max(1, Math.round(i.canvas.height * k));
@@ -214,6 +246,11 @@
     var i = st.init, cv = $('me-canvas'), g = cv.getContext('2d');
     g.clearRect(0, 0, cv.width, cv.height);
     g.drawImage(i.canvas, 0, 0, cv.width, cv.height);
+    var other = me.layer === 'boost' ? 'mask' : 'boost';
+    if (bothLayers() && i[other]) {  // the other layer, fainter
+      g.globalAlpha = 0.25;
+      g.drawImage(i[other], 0, 0, cv.width, cv.height);
+    }
     g.globalAlpha = 0.55;
     g.drawImage(i[me.layer], 0, 0, cv.width, cv.height);
     g.globalAlpha = 1;
@@ -277,12 +314,16 @@
   }
 
   function maskDone() {
-    var i = st.init, m = i[me.layer];
-    var a = m.getContext('2d').getImageData(0, 0, m.width, m.height).data, n = 0, on = 0;
-    for (var k = 3; k < a.length; k += 64) { n++; if (a[k] > 127) on++; }
-    if (me.layer === 'boost') i.boostPainted = n ? on / n : 0;
-    else i.painted = n ? on / n : 0;
-    if (!on) i[me.layer] = null;
+    var i = st.init;
+    ['mask', 'boost'].forEach(function (layer) {  // both may have changed (Rest in ...)
+      var m = i[layer];
+      if (!m) return;
+      var a = m.getContext('2d').getImageData(0, 0, m.width, m.height).data, n = 0, on = 0;
+      for (var k = 3; k < a.length; k += 64) { n++; if (a[k] > 127) on++; }
+      if (layer === 'boost') i.boostPainted = n ? on / n : 0;
+      else i.painted = n ? on / n : 0;
+      if (!on) i[layer] = null;
+    });
     show('me', false);
     drawInit();
   }

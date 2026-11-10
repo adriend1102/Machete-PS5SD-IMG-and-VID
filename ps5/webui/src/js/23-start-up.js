@@ -89,6 +89,8 @@
     $('me-size+').onclick = function () { me.brush = Math.min(240, me.brush + 8); text($('me-size'), 'Brush ' + me.brush); };
     $('me-mode').onclick = function () { me.erase = !me.erase; text($('me-mode'), me.erase ? 'Paint' : 'Erase'); };
     $('me-invert').onclick = invertMask;
+    $('me-layer').onclick = switchLayer;
+    $('me-fill').onclick = fillOther;
     $('me-clear').onclick = clearMask;
     $('me-done').onclick = maskDone;
     var mc = $('me-canvas');
