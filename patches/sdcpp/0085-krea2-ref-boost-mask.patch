@@ -1,41 +1,8 @@
 diff --git a/src/model/diffusion/krea2.hpp b/src/model/diffusion/krea2.hpp
-index fec5270..df608d3 100644
+index fec5270..7bfa2c5 100644
 --- a/src/model/diffusion/krea2.hpp
 +++ b/src/model/diffusion/krea2.hpp
-@@ -35,6 +35,10 @@ namespace Krea2 {
-         ggml_tensor* row_mask  = nullptr;
-         int64_t q_begin        = 0;
-         int64_t q_count        = 0;
-+        // row_mask holds a row for every target query (a ref_boost mask), plus one chunk of
-+        // zero rows so the last chunk's view has chunk_rows rows too.
-+        bool per_row       = false;
-+        int64_t chunk_rows = 0;
-     };
- 
-     struct Krea2Config {
-@@ -308,7 +312,7 @@ namespace Krea2 {
-             v16 = ggml_reshape_3d(g, v16, d_head, L_k, n_kv * N);
- 
-             const float scale = 1.0f / std::sqrt(static_cast<float>(d_head));
--            const int64_t rows = boost.row_mask->ne[1];
-+            const int64_t rows = boost.per_row ? boost.chunk_rows : boost.row_mask->ne[1];
-             ggml_tensor* out   = nullptr;
-             auto run           = [&](int64_t begin, int64_t count, ggml_tensor* mask) {
-                 if (count <= 0) {
-@@ -321,7 +325,11 @@ namespace Krea2 {
-             };
-             run(0, boost.q_begin, nullptr);
-             for (int64_t r = 0; r < boost.q_count; r += rows) {
--                run(boost.q_begin + r, std::min(rows, boost.q_count - r), boost.row_mask);
-+                ggml_tensor* mask = boost.row_mask;
-+                if (boost.per_row) {
-+                    mask = ggml_view_2d(g, boost.row_mask, boost.row_mask->ne[0], rows, boost.row_mask->nb[1], r * boost.row_mask->nb[1]);
-+                }
-+                run(boost.q_begin + r, std::min(rows, boost.q_count - r), mask);
-             }
-             run(boost.q_begin + boost.q_count, L_q - boost.q_begin - boost.q_count, nullptr);
- 
-@@ -864,7 +872,8 @@ namespace Krea2 {
+@@ -864,7 +864,8 @@ namespace Krea2 {
          const Krea2RefBoost* build_ref_boost(const sd::Tensor<float>& x_tensor,
                                               const sd::Tensor<float>& context_tensor,
                                               const std::vector<sd::Tensor<float>>& ref_latents_tensor,
@@ -45,18 +12,22 @@ index fec5270..df608d3 100644
              if (ref_boost == 1.0f || !std::isfinite(ref_boost) || ref_boost <= 0.0f) {
                  return nullptr;
              }
-@@ -886,7 +895,33 @@ namespace Krea2 {
+@@ -886,7 +887,35 @@ namespace Krea2 {
              const int64_t last_ref_start = seq_len - patch_len(ref_latents_tensor.back());
              const bool row_mode          = flash_attn_enabled;
              constexpr int64_t chunk_rows = 512;
 -            const int64_t mask_rows      = row_mode ? std::min(img_len, chunk_rows) : seq_len;
-+            // The weight of each target token (row major on the patch grid), from the mask's
-+            // nearest cell; empty: all 1.
++            // The mask is painted on the reference: the weight of each of the last reference's
++            // tokens (row major on its patch grid), from the mask's nearest cell; empty: all 1.
++            // As in comfyui-krea2edit's face boost, only the keys are weighted, so every target
++            // query keeps the same bias row and the bias costs no more memory.
 +            std::vector<float> weights;
 +            uint64_t mask_hash = 0;
++            const int64_t last_ref_len = seq_len - last_ref_start;
 +            if (!params.ref_boost_mask.empty()) {
-+                const int64_t gw = (x_tensor.shape()[0] + patch - 1) / patch;
-+                const int64_t gh = (x_tensor.shape()[1] + patch - 1) / patch;
++                const auto& ref = ref_latents_tensor.back();
++                const int64_t gw = (ref.shape()[0] + patch - 1) / patch;
++                const int64_t gh = (ref.shape()[1] + patch - 1) / patch;
 +                weights.resize(static_cast<size_t>(gw * gh));
 +                mask_hash = 1469598103934665603ull;
 +                for (int64_t y = 0; y < gh; ++y) {
@@ -68,19 +39,17 @@ index fec5270..df608d3 100644
 +                        mask_hash = (mask_hash ^ static_cast<uint64_t>(w * 15.0f + 0.5f)) * 1099511628211ull;
 +                    }
 +                }
-+                if (static_cast<int64_t>(weights.size()) != img_len) {
-+                    LOG_WARN("krea2 ref_boost mask ignored: %zu cells for %lld target tokens", weights.size(), (long long)img_len);
++                if (static_cast<int64_t>(weights.size()) != last_ref_len) {
++                    LOG_WARN("krea2 ref_boost mask ignored: %zu cells for %lld reference tokens", weights.size(), (long long)last_ref_len);
 +                    weights.clear();
 +                    mask_hash = 0;
 +                }
 +            }
-+            const bool per_row      = row_mode && !weights.empty();
-+            const int64_t chunk     = std::min(img_len, chunk_rows);
-+            const int64_t mask_rows = !row_mode ? seq_len : per_row ? img_len + chunk : chunk;
++            const int64_t mask_rows = row_mode ? std::min(img_len, chunk_rows) : seq_len;
              const bool use_f16           = row_mode;
              const size_t elem_bytes      = use_f16 ? sizeof(ggml_fp16_t) : sizeof(float);
              const uint64_t bytes         = static_cast<uint64_t>(seq_len) * static_cast<uint64_t>(mask_rows) * elem_bytes;
-@@ -897,14 +932,22 @@ namespace Krea2 {
+@@ -897,25 +926,33 @@ namespace Krea2 {
              }
  
              char key[256];
@@ -93,30 +62,35 @@ index fec5270..df608d3 100644
                  const size_t n   = static_cast<size_t>(seq_len) * static_cast<size_t>(mask_rows);
                  std::vector<ggml_fp16_t>().swap(ref_boost_bias_f16_);
                  std::vector<float>().swap(ref_boost_bias_f32_);
--                if (row_mode) {
-+                if (per_row) {
-+                    // Row r is target query r: the bias scaled by its weight; the last chunk of
-+                    // rows is padding.
-+                    ref_boost_bias_f16_.assign(n, ggml_fp32_to_fp16(0.0f));
-+                    for (int64_t r = 0; r < img_len; ++r) {
-+                        const ggml_fp16_t b16 = ggml_fp32_to_fp16(bias * weights[static_cast<size_t>(r)]);
-+                        std::fill(ref_boost_bias_f16_.begin() + r * seq_len + last_ref_start, ref_boost_bias_f16_.begin() + (r + 1) * seq_len, b16);
-+                    }
-+                } else if (row_mode) {
-                     // Every row is a target query: the bias on the last reference's keys.
++                // The bias on key k of the last reference (its weight with a mask).
++                auto key_bias = [&](int64_t k) {
++                    return weights.empty() ? bias : bias * weights[static_cast<size_t>(k - last_ref_start)];
++                };
+                 if (row_mode) {
+-                    // Every row is a target query: the bias on the last reference's keys.
++                    // Every row is a target query: the same bias row.
                      ref_boost_bias_f16_.assign(n, ggml_fp32_to_fp16(0.0f));
-                     const ggml_fp16_t b16 = ggml_fp32_to_fp16(bias);
-@@ -915,7 +958,8 @@ namespace Krea2 {
+-                    const ggml_fp16_t b16 = ggml_fp32_to_fp16(bias);
+-                    for (int64_t r = 0; r < mask_rows; ++r) {
+-                        std::fill(ref_boost_bias_f16_.begin() + r * seq_len + last_ref_start, ref_boost_bias_f16_.begin() + (r + 1) * seq_len, b16);
++                    for (int64_t k = last_ref_start; k < seq_len; ++k) {
++                        ref_boost_bias_f16_[static_cast<size_t>(k)] = ggml_fp32_to_fp16(key_bias(k));
++                    }
++                    for (int64_t r = 1; r < mask_rows; ++r) {
++                        std::copy(ref_boost_bias_f16_.begin(), ref_boost_bias_f16_.begin() + seq_len, ref_boost_bias_f16_.begin() + r * seq_len);
+                     }
+                 } else {
                      // Row q (query) holds the logit bias over every key (ne0 = keys, ne1 = queries).
                      ref_boost_bias_f32_.assign(n, 0.0f);
                      for (int64_t q = txt_len; q < txt_len + img_len; ++q) {
 -                        std::fill(ref_boost_bias_f32_.begin() + q * seq_len + last_ref_start, ref_boost_bias_f32_.begin() + (q + 1) * seq_len, bias);
-+                        const float b = weights.empty() ? bias : bias * weights[static_cast<size_t>(q - txt_len)];
-+                        std::fill(ref_boost_bias_f32_.begin() + q * seq_len + last_ref_start, ref_boost_bias_f32_.begin() + (q + 1) * seq_len, b);
++                        for (int64_t k = last_ref_start; k < seq_len; ++k) {
++                            ref_boost_bias_f32_[static_cast<size_t>(q * seq_len + k)] = key_bias(k);
++                        }
                      }
                  }
                  ref_boost_key_ = key;
-@@ -923,6 +967,13 @@ namespace Krea2 {
+@@ -923,6 +960,13 @@ namespace Krea2 {
                           ref_boost, bias, (long long)txt_len, (long long)img_len, (long long)refs_len,
                           (long long)last_ref_start, (long long)seq_len,
                           row_mode ? "flash-attention row-chunk F16" : "full F32", bytes / (1024.0 * 1024.0));
@@ -125,27 +99,12 @@ index fec5270..df608d3 100644
 +                    for (float w : weights) {
 +                        on += w > 0.0f ? 1 : 0;
 +                    }
-+                    LOG_INFO("krea2 ref_boost mask: %lld of %lld target tokens boosted", (long long)on, (long long)img_len);
++                    LOG_INFO("krea2 ref_boost mask: %lld of %lld reference tokens boosted", (long long)on, (long long)last_ref_len);
 +                }
              }
              ref_boost_state_ = Krea2RefBoost{};
              ggml_tensor* t   = ggml_new_tensor_2d(compute_ctx, use_f16 ? GGML_TYPE_F16 : GGML_TYPE_F32, seq_len, mask_rows);
-@@ -930,9 +981,11 @@ namespace Krea2 {
-             set_backend_tensor_data(t, use_f16 ? static_cast<const void*>(ref_boost_bias_f16_.data())
-                                                : static_cast<const void*>(ref_boost_bias_f32_.data()));
-             if (row_mode) {
--                ref_boost_state_.row_mask = t;
--                ref_boost_state_.q_begin  = txt_len;
--                ref_boost_state_.q_count  = img_len;
-+                ref_boost_state_.row_mask   = t;
-+                ref_boost_state_.q_begin    = txt_len;
-+                ref_boost_state_.q_count    = img_len;
-+                ref_boost_state_.per_row    = per_row;
-+                ref_boost_state_.chunk_rows = chunk;
-             } else {
-                 ref_boost_state_.full_mask = t;
-             }
-@@ -978,7 +1031,7 @@ namespace Krea2 {
+@@ -978,7 +1022,7 @@ namespace Krea2 {
              }));
  
              auto runner_ctx  = get_context();
@@ -155,15 +114,16 @@ index fec5270..df608d3 100644
                                                             ref_image_params.force_ref_timestep_zero, ref_boost);
              ggml_build_forward_expand(gf, out);
 diff --git a/src/model/diffusion/model.hpp b/src/model/diffusion/model.hpp
-index 77bb960..b253f6c 100644
+index 77bb960..8f4932c 100644
 --- a/src/model/diffusion/model.hpp
 +++ b/src/model/diffusion/model.hpp
-@@ -46,6 +46,11 @@ struct RefImageParams {
+@@ -46,6 +46,12 @@ struct RefImageParams {
      // Below 1: the first reference is also the starting image, denoised from this strength
      // (as img2img) instead of from pure noise, so what the prompt does not ask to change stays.
      float edit_strength = 1.0f;
-+    // Where ref_boost applies, on a w x h grid over the target (row major, 0..1): the target
-+    // tokens get log(ref_boost) times their cell's weight. Empty: everywhere, as before.
++    // Which part of the reference ref_boost pulls toward, on a w x h grid over the last
++    // reference (row major, 0..1): its tokens' keys get log(ref_boost) times their cell's
++    // weight. Empty: all of it, as before.
 +    std::vector<float> ref_boost_mask;
 +    int ref_boost_mask_w = 0;
 +    int ref_boost_mask_h = 0;
