@@ -507,6 +507,10 @@
     var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref,
       sourceUrl: crop ? i.canvas.toDataURL('image/png') : null, srcW: W, srcH: H };
     if (ref && i.boost && refMaskable()) out.boostGrid = boostGrid(i.boost, box, gw, gh);
+    // A red mask without a green one: Ref Boost pulls only toward the part of the photo that is
+    // kept, not toward what the red part replaces (pulled back to the old content, the new one
+    // came out as a smeared mix of both).
+    else if (ref && i.mask && refMaskable()) out.boostGrid = boostGrid(i.mask, box, gw, gh, true);
     if (i.mask && (!ref || refMaskable())) {
       out.soft = softMask(i.mask, box, gw, gh);
       out.mask = out.soft.toDataURL('image/png');
@@ -516,12 +520,12 @@
 
   // The Ref Boost area on the DiT's token grid (one cell a 16x16 pixel patch of the w x h made):
   // "WxH:" then one hex digit a cell, its painted share 0-f, row major (ref_boost_mask).
-  function boostGrid(layer, box, w, h) {
+  function boostGrid(layer, box, w, h, invert) {
     var gw = Math.ceil(w / 16), gh = Math.ceil(h / 16), c = canvasOf(gw, gh), g = c.getContext('2d');
     g.imageSmoothingEnabled = true;
     g.drawImage(layer, box.x, box.y, box.w, box.h, 0, 0, gw, gh);
     var a = g.getImageData(0, 0, gw, gh).data, s = gw + 'x' + gh + ':';
-    for (var k = 3; k < a.length; k += 4) s += Math.round(a[k] / 255 * 15).toString(16);
+    for (var k = 3; k < a.length; k += 4) s += Math.round((invert ? 255 - a[k] : a[k]) / 255 * 15).toString(16);
     return s;
   }
 
