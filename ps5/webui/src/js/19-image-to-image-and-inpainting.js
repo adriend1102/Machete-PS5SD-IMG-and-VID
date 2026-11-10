@@ -213,6 +213,13 @@
     sizeMask();
   }
 
+  // The brush size: the - and + buttons step it by 8, the box takes any size typed (2-400 px).
+  function setBrush(v) {
+    v = parseInt(v, 10);
+    if (isFinite(v)) me.brush = Math.max(2, Math.min(400, v));
+    $('me-size').value = me.brush;
+  }
+
   function switchLayer() { setLayer(me.layer === 'boost' ? 'mask' : 'boost'); }
 
   // The other layer becomes everything this one does not cover: paint the face green, then
@@ -238,7 +245,7 @@
     cv.width = Math.max(1, Math.round(i.canvas.width * k));
     cv.height = Math.max(1, Math.round(i.canvas.height * k));
     me.scale = k;
-    text($('me-size'), 'Brush ' + me.brush);
+    $('me-size').value = me.brush;
     drawMask();
   }
 

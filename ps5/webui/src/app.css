@@ -569,7 +569,8 @@
   .initbtns button { margin: 0.25rem; min-height: 2.6rem; }
   .me-body { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; padding: 0 1rem 1rem; }
   #me-canvas { touch-action: none; cursor: crosshair; border-radius: 6px; }
-  .me-size { flex: none; color: var(--muted); margin: 0 0.4rem 0 0.6rem; min-width: 5.5rem; text-align: center; }
+  .me-size { flex: none; display: inline-flex; align-items: center; gap: 0.35rem; color: var(--muted); margin: 0 0.4rem 0 0.6rem; }
+  .me-size input { width: 4.2rem; min-height: 2.4rem; text-align: center; }
   .authbtns { display: flex; flex-wrap: wrap; margin: 0 -0.25rem; }
   .authbtns button { margin: 0.25rem; min-height: 2.6rem; }
   .arow { display: flex; justify-content: space-between; align-items: baseline; padding: 0.55rem 0; border-bottom: 1px solid var(--border); }
