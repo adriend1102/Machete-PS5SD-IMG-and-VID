@@ -505,7 +505,8 @@
     var ic = canvasOf(gw, gh);
     ic.getContext('2d').drawImage(i.canvas, box.x, box.y, box.w, box.h, 0, 0, gw, gh);
     var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref,
-      sourceUrl: crop ? i.canvas.toDataURL('image/png') : null, srcW: W, srcH: H };
+      sourceUrl: crop ? i.canvas.toDataURL('image/png') : null, srcW: W, srcH: H,
+      layers: { mask: smallLayer(i.mask), boost: ref ? smallLayer(i.boost) : null } };
     if (ref && i.boost && refMaskable()) out.boostGrid = boostGrid(i.boost, box, gw, gh);
     // A red mask without a green one: Ref Boost pulls only toward the part of the photo that is
     // kept, not toward what the red part replaces (pulled back to the old content, the new one
@@ -516,6 +517,62 @@
       out.mask = out.soft.toDataURL('image/png');
     }
     return out;
+  }
+
+  // The red and green layers, at most 384 px, as PNG data URLs kept with an edit's settings
+  // (succeed() adds them to the saved picture's SDCPP JSON as "machete_masks").
+  function smallLayer(layer) {
+    if (!layer) return null;
+    var k = Math.min(1, 384 / Math.max(layer.width, layer.height));
+    var c = canvasOf(Math.max(1, Math.round(layer.width * k)), Math.max(1, Math.round(layer.height * k)));
+    c.getContext('2d').drawImage(layer, 0, 0, c.width, c.height);
+    return c.toDataURL('image/png');
+  }
+
+  // "Use these settings": the layers of an edit back onto the start image in the Create tab (the
+  // same photo has to be loaded there). The red and green kept with the picture, else the green
+  // from the Ref Boost grid of its request. Returns a sentence for the toast.
+  function restoreMasks(j) {
+    var mm = j.machete_masks || null;
+    var grid = /(?:^|,)ref_boost_mask=(\d+)x(\d+):([0-9a-f]+)/.exec(String(j.ref_image_args || ''));
+    if (!mm && !grid) return '';
+    var i = st.init;
+    if (!i) return ' Its mask comes back when the same photo is loaded with Edit first.';
+    var W = i.canvas.width, H = i.canvas.height;
+    function painted(c) {
+      var a = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, n = 0, on = 0;
+      for (var k = 3; k < a.length; k += 64) { n++; if (a[k] > 127) on++; }
+      return n ? on / n : 0;
+    }
+    function fromUrl(url, layer, rgb) {
+      var im = new Image();
+      im.onload = function () {
+        var c = canvasOf(W, H), g = c.getContext('2d');
+        g.drawImage(im, 0, 0, W, H);
+        var d = g.getImageData(0, 0, W, H), a = d.data;
+        for (var k = 0; k < a.length; k += 4) { a[k] = rgb[0]; a[k + 1] = rgb[1]; a[k + 2] = rgb[2]; }
+        g.putImageData(d, 0, 0);
+        var p = painted(c);
+        i[layer] = p > 0 ? c : null;
+        if (layer === 'boost') i.boostPainted = p; else i.painted = p;
+        drawInit();
+      };
+      im.src = url;
+    }
+    if (mm) {
+      if (mm.mask) fromUrl(mm.mask, 'mask', layerRGB.mask); else i.mask = null;
+      if (mm.boost) fromUrl(mm.boost, 'boost', layerRGB.boost); else i.boost = null;
+    } else {
+      var gw = +grid[1], gh = +grid[2], hex = grid[3];
+      var c = canvasOf(gw, gh), g = c.getContext('2d'), d = g.createImageData(gw, gh), a = d.data;
+      for (var k = 0; k < gw * gh && k < hex.length; k++) {
+        a[k * 4] = layerRGB.boost[0]; a[k * 4 + 1] = layerRGB.boost[1]; a[k * 4 + 2] = layerRGB.boost[2];
+        a[k * 4 + 3] = Math.round(parseInt(hex.charAt(k), 16) / 15 * 255);
+      }
+      g.putImageData(d, 0, 0);
+      fromUrl(c.toDataURL('image/png'), 'boost', layerRGB.boost);
+    }
+    return ' Its mask is back on the start image.';
   }
 
   // The Ref Boost area on the DiT's token grid (one cell a 16x16 pixel patch of the w x h made):

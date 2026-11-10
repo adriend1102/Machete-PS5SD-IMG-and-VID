@@ -158,26 +158,35 @@
       for (var k = 0; k < (loraList || []).length; k++) if (baseName(loraList[k].path) === ls[i].name) path = loraList[k].path;
       if (path) loras.push({ path: path, m: Number(ls[i].multiplier) || 0 }); else missing.push(ls[i].name);
     }
+    // Ref Boost and Ref Strength of a Krea2 edit, from the request's ref_image_args (Ref Strength
+    // from the starting noise it was sent as: 0.999 - 0.029 x Ref Strength).
+    var ra = String(j.ref_image_args || '');
+    var rb = /(?:^|,)ref_boost=([0-9.]+)/.exec(ra), es = /(?:^|,)edit_strength=([0-9.]+)/.exec(ra);
+    var refBoost = rb ? round2(rb[1]) : undefined;
+    var refKeep = rb ? (es ? round2(Math.max(0, Math.min(1, (0.999 - parseFloat(es[1])) / 0.029))) : 0) : undefined;
     $('prompt').value = j.prompt ? j.prompt.positive || '' : '';
     $('neg').value = j.prompt ? j.prompt.negative || '' : '';
     negShow(!!$('neg').value);
     setForm({
       w: j.width, h: j.height, steps: s.steps, cfg: round2(g.txt_cfg),
       sampler: s.method || 'default', scheduler: s.scheduler || 'default', clip: j.clip_skip, seed: j.seed, loras: loras,
+      refBoost: refBoost !== undefined ? refBoost : num('ref-boost', 1, 0.01, 100),
+      refKeep: refKeep !== undefined ? refKeep : num('edit-strength', 0, 0, 1),
       hr: hr && hr.enabled ? { on: true, up: hr.upscaler, scale: round2(hr.scale), steps: hr.steps, den: round2(hr.denoising_strength) } : null
     });
     if (j.video) {
       $('frames').value = j.video.frame_count;
       $('fps').value = j.video.fps;
     }
-    if (!st.video && st.mode !== 'guide') setMode('image');
+    var masks = restoreMasks(j);
+    if (!st.video && st.mode !== 'guide' && !st.init) setMode('image');
     persist();
     closeLb();
     setView('create');
     // the model it was made with, when that is not the loaded one
     var file = infoModel(j), m = st.mdl && st.mdl.loaded ? findModel(st.mdl.loaded) : null;
     var other = file && m && JSON.stringify(m).indexOf(file) < 0;
-    toast('The settings of ' + it.name + ' are in the form.' +
+    toast('The settings of ' + it.name + ' are in the form.' + masks +
       (other ? ' It was made with ' + file + '; the same seed gives the same image only with that model.' : '') +
       (missing.length ? ' Not installed: ' + missing.join(', ') + '.' : ''), other || missing.length ? 9000 : 4000);
   }

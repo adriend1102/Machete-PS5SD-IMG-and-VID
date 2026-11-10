@@ -116,12 +116,25 @@
 
   // images: base64 PNGs, in the order of their seeds (seed, seed + 1, …). A masked run is put back
   // together over the start image first (putBack), then saved to the gallery in place of the raw results.
+  // The edit's red and green layers added to the SDCPP JSON at the end of the parameters, for
+  // "Use these settings" (restoreMasks).
+  function withMasks(params, layers) {
+    if (!params || !layers || (!layers.mask && !layers.boost)) return params;
+    var at = params.lastIndexOf('SDCPP: {');
+    if (at < 0) return params;
+    try {
+      var j = JSON.parse(params.substring(at + 7));
+      j.machete_masks = layers;
+      return params.substring(0, at + 7) + JSON.stringify(j);
+    } catch (e) { return params; }
+  }
+
   function succeed(images, seed, edited) {
     var rq = st.last && st.last.req;
     if (rq && rq.soft && !edited) {
       status('Putting the image together…');
       var params = [];
-      for (var p = 0; p < images.length; p++) params.push(pngParameters(images[p]));
+      for (var p = 0; p < images.length; p++) params.push(withMasks(pngParameters(images[p]), rq.layers));
       putBack(rq, images, function (out) { st.editParams = params; succeed(out, seed, true); });
       return;
     }
