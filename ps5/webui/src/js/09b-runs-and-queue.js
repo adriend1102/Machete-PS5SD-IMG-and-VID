@@ -78,7 +78,7 @@
   // The size the final image of the settings has (a preview is drawn at it): null when the page does not know it.
   function finalSize(l) {
     if (!l) return null;
-    if (l.req) return l.req.crop && l.req.source ? { w: l.req.source.width, h: l.req.source.height } : { w: l.req.w, h: l.req.h };
+    if (l.req) return l.req.crop && l.req.srcW ? { w: l.req.srcW, h: l.req.srcH } : { w: l.req.w, h: l.req.h };
     if (l.hr && l.hr.on) return { w: Math.round(l.w * l.hr.scale / 8) * 8, h: Math.round(l.h * l.hr.scale / 8) * 8 };
     return { w: l.w, h: l.h };
   }

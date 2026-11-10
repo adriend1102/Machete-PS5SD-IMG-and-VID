@@ -156,16 +156,15 @@ files: nvfp4 now 261 block-quantized layers (258 nvfp4 + 3 fp8) and no stray
 scales; int4 (256), mxfp8 (261), fp8mixed (261) and int8 (224 int8_tensorwise)
 unchanged.
 
-## 2026-11-10: Ref Boost on a painted area only (patch 0085, web UI)
+## 2026-11-10: Ref Boost toward a painted part of the reference (patch 0085, web UI)
 
 `ref_image_args` takes `ref_boost_mask=WxH:<hex>`: one hex digit (0-f) a cell
-of a W x H grid over the target, row major. Each target token gets
-`log(ref_boost)` times its cell's weight on the last reference's keys, so the
-painted part follows the reference more closely and the rest is edited
-freely. Without the key the boost is on every target token, as before. With
-flash attention the bias then has one row a target token (plus one chunk of
-zero rows) and each 512-row chunk uses its own view of it; checked on the CPU
-backend against the shared-row bias: identical with all weights 1, identical to
-no boost on unpainted rows. In the web UI, "Paint the Ref Boost area" (green)
-appears next to Ref Boost for Krea2 edits by the prompt and sends the area on
-the 16-pixel token grid of the size made.
+of a W x H grid over the last reference, row major. As in comfyui-krea2edit's
+face boost, only that reference's keys inside the painted part get
+`log(ref_boost)` (times the cell's weight): every target query pulls toward the
+face, wherever it ends up in the picture (a small face on a beach photo too).
+Every query keeps the same bias row, so the bias costs no more memory than the
+plain boost. Without the key the whole reference is boosted, as before. In the
+web UI the green layer of the mask editor ("Paint the face (Ref Boost)") is
+painted on the start image, which is the reference, and goes out on the
+16-pixel token grid of the size made.

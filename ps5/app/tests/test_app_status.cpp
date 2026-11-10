@@ -104,7 +104,7 @@ void test_job() {
     for (int i = 0; i < 80; i++) {
         s.set_result("/x/" + std::to_string(i) + ".png");
     }
-    CHECK(s.snapshot().recent.size() == 82);  // all of them, past the old cap of 64
+    CHECK(s.snapshot().recent.size() == 64);
 
     for (int i = 0; i < 40; i++) {
         s.log("line " + std::to_string(i) + "\n");

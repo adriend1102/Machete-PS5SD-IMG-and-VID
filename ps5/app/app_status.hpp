@@ -114,10 +114,10 @@ class AppStatus {
   private:
     static constexpr std::size_t kLines   = 24;
   public:
-    // Every creation in outputs/ is listed (the TV's gallery decodes only the
-    // thumbnails near the selection, dashboard.cpp); the cap only bounds a
-    // runaway folder.
-    static constexpr std::size_t kResults = 8192;
+    // The TV's gallery keeps the newest 64 (the web gallery lists them all);
+    // older ones drop out, and only the thumbnails near the selection are
+    // decoded (dashboard.cpp).
+    static constexpr std::size_t kResults = 64;
 
   private:
     mutable std::mutex           mutex_;

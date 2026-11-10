@@ -5,7 +5,10 @@
   // put back into the image here, in the page; otherwise the whole image (cropped to the form's aspect)
   // is the start. A masked result is always blended back over the start image with a soft edge, so the
   // rest of the image stays exactly as it was, and saved to the gallery in place of the raw result.
-  var INIT_MAX = 4096;
+  // The start image's longest side at most (a phone photo is scaled down): the largest size made
+  // is about 1536, and the start image and its two mask layers are canvases of this size, which
+  // a phone's browser keeps in a small memory budget (past it, canvases come back empty).
+  var INIT_MAX = 2048;
   // layer: 'mask' (what changes) or 'boost' (where Ref Boost applies, Krea2 edits by the prompt)
   var me = { brush: 48, erase: false, down: false, last: null, scale: 1, layer: 'mask' };
   var layerColor = { mask: 'rgb(255,48,48)', boost: 'rgb(48,200,96)' };
@@ -108,7 +111,7 @@
       show('boost-mask', ref && refMaskable(), 'inline-block');
       text($('boost-mask'), i.boost
         ? 'Ref Boost area: ' + Math.max(1, Math.round(i.boostPainted * 100)) + '% (edit)'
-        : 'Paint the Ref Boost area');
+        : 'Paint the face (Ref Boost)');
       show('init-crop-row', !!i.mask && !ref, 'flex');
       text($('init-hint'), ref && i.mask && refMaskable()
         ? 'Only the painted part is edited; the rest of the photo stays exactly as it is. Say what to change there, for example "a red bikini".'
@@ -193,7 +196,7 @@
     me.layer = layer === 'boost' && bothLayers() ? 'boost' : 'mask';
     if (!i[me.layer]) i[me.layer] = canvasOf(i.canvas.width, i.canvas.height);
     text($('me-title'), me.layer === 'boost'
-      ? 'Green: what should stay like the reference (Ref Boost applies only there)'
+      ? 'Green: the face (Ref Boost pulls the result toward this part of the photo)'
       : 'Red: paint over what should change');
     text($('me-layer'), me.layer === 'boost' ? 'Painting green · switch to red' : 'Painting red · switch to green');
     text($('me-fill'), me.layer === 'boost' ? 'Rest in red' : 'Rest in green');
@@ -501,7 +504,8 @@
     }
     var ic = canvasOf(gw, gh);
     ic.getContext('2d').drawImage(i.canvas, box.x, box.y, box.w, box.h, 0, 0, gw, gh);
-    var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref };
+    var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref,
+      sourceUrl: crop ? i.canvas.toDataURL('image/png') : null, srcW: W, srcH: H };
     if (ref && i.boost && refMaskable()) out.boostGrid = boostGrid(i.boost, box, gw, gh);
     if (i.mask && (!ref || refMaskable())) {
       out.soft = softMask(i.mask, box, gw, gh);
@@ -523,16 +527,33 @@
 
   // A result blended over the start image where the mask is: the whole start image for "only the
   // masked area", else the part that was made. cb(base64 PNG).
+  // Loads data URLs as images; cb(images, or null when one would not load).
+  function loadImages(urls, cb) {
+    var out = [], left = urls.length, failed = false;
+    urls.forEach(function (u, k) {
+      var im = new Image();
+      im.onload = function () { out[k] = im; if (--left === 0) cb(failed ? null : out); };
+      im.onerror = function () { failed = true; if (--left === 0) cb(null); };
+      im.src = u;
+    });
+  }
+
+  // The start image, the mask and the result are read back from the data URLs the request kept,
+  // not from the canvases: a phone's browser may empty canvases while the page waits in the
+  // background through a long run, which put back a black picture.
   function putBackOne(rq, b64, cb) {
-    var img = new Image();
-    img.onload = function () {
+    var urls = [dataUrl(b64), rq.init, rq.mask];
+    if (rq.crop) urls.push(rq.sourceUrl);
+    loadImages(urls, function (ims) {
+      if (!ims) { cb(b64); return; }
       var tw = rq.crop ? rq.box.w : rq.w, th = rq.crop ? rq.box.h : rq.h;
       var base = canvasOf(tw, th), bg = base.getContext('2d');
-      bg.drawImage(rq.source, rq.box.x, rq.box.y, rq.box.w, rq.box.h, 0, 0, tw, th);
+      if (rq.crop) bg.drawImage(ims[3], rq.box.x, rq.box.y, rq.box.w, rq.box.h, 0, 0, tw, th);
+      else bg.drawImage(ims[1], 0, 0, tw, th);
       var res = canvasOf(tw, th), rg = res.getContext('2d');
-      rg.drawImage(img, 0, 0, tw, th);
+      rg.drawImage(ims[0], 0, 0, tw, th);
       var mk = canvasOf(tw, th), mg = mk.getContext('2d');
-      mg.drawImage(rq.soft, 0, 0, tw, th);
+      mg.drawImage(ims[2], 0, 0, tw, th);
       var bd = bg.getImageData(0, 0, tw, th), rd = rg.getImageData(0, 0, tw, th).data, md = mg.getImageData(0, 0, tw, th).data;
       var px = bd.data;
       for (var k = 0; k < px.length; k += 4) {
@@ -540,20 +561,21 @@
         px[k] = px[k] * (1 - a) + rd[k] * a;
         px[k + 1] = px[k + 1] * (1 - a) + rd[k + 1] * a;
         px[k + 2] = px[k + 2] * (1 - a) + rd[k + 2] * a;
+        px[k + 3] = 255;
       }
       bg.putImageData(bd, 0, 0);
+      res.width = mk.width = 0;  // let the phone's canvas memory go
       var outc = base;
       if (rq.crop) {
-        outc = canvasOf(rq.source.width, rq.source.height);
+        outc = canvasOf(rq.srcW, rq.srcH);
         var og = outc.getContext('2d');
-        og.drawImage(rq.source, 0, 0);
+        og.drawImage(ims[3], 0, 0, rq.srcW, rq.srcH);
         og.drawImage(base, rq.box.x, rq.box.y);
       }
       var url = outc.toDataURL('image/png');
+      base.width = outc.width = 0;
       cb(url.substring(url.indexOf(',') + 1));
-    };
-    img.onerror = function () { cb(b64); };
-    img.src = dataUrl(b64);
+    });
   }
 
   function putBack(rq, images, cb) {
