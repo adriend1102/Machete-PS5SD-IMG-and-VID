@@ -122,15 +122,15 @@
         // whole number of steps): 0.999 at the low end down to 0.97 at 1. Starting at about
         // 0.98 (6 of 8 steps) the photo already came back as is, at 1.0 the pose was redrawn,
         // so the pose is settled in that narrow band.
-        // A mask also needs the photo as the starting image, so that the part left unpainted is
-        // kept: at Ref Strength 0 it starts from (almost) pure noise, which redraws the painted part
-        // freely.
-        if (p.refKeep > 0 || p.req.mask) {
-          var noise = p.refKeep > 0 ? 0.999 - 0.029 * Math.min(1, p.refKeep) : 0.9999;
+        if (p.refKeep > 0) {
+          var noise = 0.999 - 0.029 * Math.min(1, p.refKeep);
           body.ref_image_args += ',edit_strength=' + noise.toFixed(4);
           body.sample_params.extra_sample_args = 'strength_as_noise_level=true,force_first_sigma=true';
         }
-        if (p.req.mask) body.mask_image = p.req.mask;
+        // A red mask is not sent: Krea2 edits the whole picture by the prompt, which keeps it
+        // coherent (light, edges, anatomy), and only the red part of that edit is laid over the
+        // photo afterwards (putBack, soft edge). Held to the old pixels at every step instead, the
+        // painted part came out as a patch that did not fit, with seams and grey smudges.
         // Painted Ref Boost area: the boost applies there only (none painted: everywhere).
         if (p.req.boostGrid) body.ref_image_args += ',ref_boost_mask=' + p.req.boostGrid;
       }
