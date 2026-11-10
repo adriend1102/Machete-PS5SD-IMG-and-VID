@@ -127,10 +127,13 @@
           body.ref_image_args += ',edit_strength=' + noise.toFixed(4);
           body.sample_params.extra_sample_args = 'strength_as_noise_level=true,force_first_sigma=true';
         }
-        // A red mask is not sent: Krea2 edits the whole picture by the prompt, which keeps it
-        // coherent (light, edges, anatomy), and only the red part of that edit is laid over the
-        // photo afterwards (putBack, soft edge). Held to the old pixels at every step instead, the
-        // painted part came out as a patch that did not fit, with seams and grey smudges.
+        // The red mask: with Ref Strength above 0 the edit starts from the photo, and the mask is
+        // sent too, so the unpainted part is held in place at every step and nothing moves; the
+        // painted part, started from the photo, fits its surroundings. At 0 (a free redraw) it is
+        // not sent: from pure noise, held to the old pixels around it, the painted part came out
+        // as a patch that did not fit (seams, grey smudges); Krea2 edits the whole picture instead
+        // and only its red part is laid over the photo (putBack, soft edge).
+        if (p.req.mask && p.refKeep > 0) body.mask_image = p.req.mask;
         // Painted Ref Boost area: the boost applies there only (none painted: everywhere).
         if (p.req.boostGrid) body.ref_image_args += ',ref_boost_mask=' + p.req.boostGrid;
       }
