@@ -2052,6 +2052,10 @@ extern "C" int sd_app_request(const char * method, const char * path, const char
         const std::string output = field("output", "");
         const std::string type   = field("type", "q5_K");
         const std::string rules  = field("rules", "");
+        // Optional: the tensors matching override_pattern taken from another file (the raw
+        // BigLoveKreaEdit3 checkpoint with attn.wk from the released MXFP8).
+        const std::string over         = field("override", "");
+        const std::string over_pattern = field("override_pattern", "");
         const sd_type_t   t      = str_to_sd_type(type.c_str());
         std::lock_guard<std::mutex> lock(g_convert_mutex);
         if (input.empty() || output.empty() || t == SD_TYPE_COUNT) {
@@ -2067,9 +2071,13 @@ extern "C" int sd_app_request(const char * method, const char * path, const char
             g_convert_output  = under_models(output);
             g_convert_type    = type;
             std::printf("ps5sd: convert %s -> %s (%s)\n", g_convert_input.c_str(), g_convert_output.c_str(), type.c_str());
-            std::thread([in = g_convert_input, dst = g_convert_output, t, rules]() {
-                const bool ok = convert_with_components(in.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr, dst.c_str(), t,
-                                                        rules.empty() ? nullptr : rules.c_str(), false, 2, nullptr, 0);
+            std::thread([in = g_convert_input, dst = g_convert_output, t, rules,
+                         over = over.empty() ? std::string() : under_models(over), over_pattern]() {
+                const bool ok = over.empty()
+                                    ? convert_with_components(in.c_str(), nullptr, nullptr, nullptr, nullptr, nullptr, dst.c_str(), t,
+                                                              rules.empty() ? nullptr : rules.c_str(), false, 2, nullptr, 0)
+                                    : convert_with_overrides(in.c_str(), over.c_str(), over_pattern.c_str(), dst.c_str(), t,
+                                                             rules.c_str(), 2);
                 std::printf("ps5sd: convert %s: %s\n", dst.c_str(), ok ? "done" : "failed");
                 std::lock_guard<std::mutex> lock(g_convert_mutex);
                 g_convert_running = false;

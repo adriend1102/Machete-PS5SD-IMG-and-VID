@@ -1,0 +1,129 @@
+diff --git a/include/stable-diffusion.h b/include/stable-diffusion.h
+index f4ea0ea..0c09bbc 100644
+--- a/include/stable-diffusion.h
++++ b/include/stable-diffusion.h
+@@ -624,6 +624,14 @@ SD_API bool convert(const char* input_path,
+                     const char* tensor_type_rules,
+                     bool convert_name);
+ 
++SD_API bool convert_with_overrides(const char* model_path,
++                                   const char* override_path,
++                                   const char* override_pattern,
++                                   const char* output_path,
++                                   enum sd_type_t output_type,
++                                   const char* tensor_type_rules,
++                                   int n_threads);
++
+ SD_API bool convert_with_components(const char* model_path,
+                                     const char* clip_l_path,
+                                     const char* clip_g_path,
+diff --git a/src/convert.cpp b/src/convert.cpp
+index b8a6212..4bfbdc6 100644
+--- a/src/convert.cpp
++++ b/src/convert.cpp
+@@ -26,6 +26,9 @@
+ struct TensorExportInfo {
+     TensorStorage storage;
+     ggml_type type;
++    // The name written to the output when it differs from the storage's (a tensor taken from an
++    // override file, convert_with_overrides).
++    std::string out_name;
+ };
+ 
+ struct TensorExportJob {
+@@ -98,7 +101,8 @@ static std::vector<TensorWritePlan> tensor_write_plans_from_export_infos(const s
+     std::vector<TensorWritePlan> plans;
+     plans.reserve(tensors.size());
+     for (const TensorExportInfo& info : tensors) {
+-        const std::string name = convert_name ? convert_tensor_name(info.storage.name, version) : info.storage.name;
++        const std::string& stored = info.out_name.empty() ? info.storage.name : info.out_name;
++        const std::string name    = convert_name ? convert_tensor_name(stored, version) : stored;
+         plans.push_back(tensor_write_plan_from_export_info(info, name));
+     }
+     return plans;
+@@ -617,6 +621,85 @@ bool convert_with_components(const char* model_path,
+     return export_loaded_model(model_loader, output_path, output_type, tensor_type_rules, n_threads, false, nullptr);
+ }
+ 
++// Converts model_path, with the tensors whose names match override_pattern taken from
++// override_path instead (same shapes; the override file's names may carry a
++// "model.diffusion_model." or "diffusion_model." prefix). Machete PS5SD: the raw
++// BigLoveKreaEdit3 bf16 checkpoint has attn.wk weights that differ from every released
++// file, so a GGUF is made from it with attn.wk from the released MXFP8.
++bool convert_with_overrides(const char* model_path,
++                            const char* override_path,
++                            const char* override_pattern,
++                            const char* output_path,
++                            sd_type_t output_type,
++                            const char* tensor_type_rules,
++                            int n_threads) {
++    if (model_path == nullptr || override_path == nullptr || override_pattern == nullptr || *override_pattern == '\0') {
++        LOG_ERROR("convert with overrides needs a model, an override file and a pattern");
++        return false;
++    }
++    if (!validate_tensor_types(output_type, tensor_type_rules)) {
++        return false;
++    }
++    static const std::string ovr = "__override__.";
++    ModelLoader model_loader;
++    if (!model_loader.init_from_file(model_path, "") || !model_loader.init_from_file(override_path, ovr)) {
++        LOG_ERROR("init model loader failed: '%s' or '%s'", model_path, override_path);
++        return false;
++    }
++    ggml_type type             = sd_type_to_ggml_type(output_type);
++    TensorTypeRules type_rules = parse_tensor_type_rules(tensor_type_rules != nullptr ? tensor_type_rules : "");
++    std::regex pattern;
++    try {
++        pattern = std::regex(override_pattern);
++    } catch (const std::regex_error&) {
++        LOG_ERROR("invalid override pattern '%s'", override_pattern);
++        return false;
++    }
++    const auto& map = model_loader.get_tensor_storage_map();
++    std::vector<TensorExportInfo> tensors;
++    int overridden = 0;
++    for (const auto& kv : map) {
++        const TensorStorage& base = kv.second;
++        if (base.name.compare(0, ovr.size(), ovr) == 0) {
++            continue;
++        }
++        TensorExportInfo info;
++        info.storage = base;
++        info.type    = get_export_tensor_type(model_loader, base, type, type_rules);
++        if (std::regex_search(base.name, pattern)) {
++            const TensorStorage* found = nullptr;
++            for (const char* prefix : {"", "model.diffusion_model.", "diffusion_model."}) {
++                auto it = map.find(ovr + prefix + base.name);
++                if (it != map.end()) {
++                    found = &it->second;
++                    break;
++                }
++            }
++            if (found == nullptr || found->nelements() != base.nelements() || found->ne[0] != base.ne[0]) {
++                LOG_ERROR("override for '%s' %s", base.name.c_str(), found == nullptr ? "not found" : "has another shape");
++                return false;
++            }
++            info.storage  = *found;
++            info.out_name = base.name;
++            overridden++;
++        }
++        tensors.push_back(std::move(info));
++    }
++    if (overridden == 0) {
++        LOG_ERROR("override pattern '%s' matched no tensor", override_pattern);
++        return false;
++    }
++    LOG_INFO("convert: %d of %zu tensors taken from '%s'", overridden, tensors.size(), override_path);
++    GGUFStreamingWriter writer;
++    std::string error;
++    const std::map<std::string, ggml_tensor*>* no_mem = nullptr;
++    bool ok = write_model_file_streaming(model_loader, output_path, tensors, writer, n_threads, false, no_mem, &error);
++    if (!ok && !error.empty()) {
++        LOG_ERROR("%s", error.c_str());
++    }
++    return ok;
++}
++
+ bool convert(const char* input_path,
+              const char* vae_path,
+              const char* output_path,
