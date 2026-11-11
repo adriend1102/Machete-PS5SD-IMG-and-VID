@@ -66,6 +66,7 @@
     $('vinit-file').onchange = vinitFile;
     $('vinit-drop').onclick = dropVideoStart;
     $('init-mask').onclick = function () { openMask('mask'); };
+    $('init-clear').onclick = clearMasks;
     $('boost-mask').onclick = function () { openMask('boost'); };
     $('init-crop').onchange = drawInit;
     $('init-ref').onchange = drawInit;
