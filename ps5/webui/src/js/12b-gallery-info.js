@@ -36,9 +36,25 @@
     return m.diffusion_model || m.model || '';
   }
 
-  // One line: model · size · steps · CFG · sampler · seed · LoRAs · hires · frames.
+  // Ref Boost and Ref Strength of a Krea2 edit, from the request's ref_image_args (Ref Strength
+  // from the starting noise it was sent as: 0.999 - 0.029 x Ref Strength; none sent: 0, a redraw
+  // from pure noise). Null for an image made without a reference.
+  function refInfo(j) {
+    var ra = String(j.ref_image_args || '');
+    var rb = /(?:^|,)ref_boost=([0-9.]+)/.exec(ra), es = /(?:^|,)edit_strength=([0-9.]+)/.exec(ra);
+    if (!rb) return null;
+    return {
+      boost: round2(rb[1]),
+      keep: es ? round2(Math.max(0, Math.min(1, (0.999 - parseFloat(es[1])) / 0.029))) : 0,
+      face: /(?:^|,)ref_boost_mask=/.test(ra) || !!(j.machete_masks && j.machete_masks.boost),
+      mask: !!(j.machete_masks && j.machete_masks.mask)
+    };
+  }
+
+  // One line: build · model · size · steps · CFG · sampler · seed · Ref Boost · LoRAs · hires · frames.
   function settingsLine(j) {
     var s = j.sampling || {}, g = s.guidance || {}, bits = [];
+    if (j.ps5sd && j.ps5sd.build) bits.push(String(j.ps5sd.build));
     if (j.ps5sd && j.ps5sd.preset) bits.push('preset ' + j.ps5sd.preset);
     if (infoModel(j)) bits.push(infoModel(j));
     if (j.ps5sd && j.ps5sd.seconds > 0) bits.push(took(j.ps5sd.seconds));
@@ -47,6 +63,12 @@
     if (s.method) bits.push(s.method + (s.scheduler ? ' ' + s.scheduler : ''));
     if (j.clip_skip > 0) bits.push('CLIP skip ' + j.clip_skip);
     bits.push('seed ' + j.seed);
+    var r = refInfo(j);
+    if (r) {
+      bits.push('Ref Boost ' + r.boost + (r.face ? ' (face painted)' : ''),
+        'Ref Strength ' + r.keep + (r.keep > 0 ? ' (starts from the photo)' : ' (redraw)'));
+      if (r.mask) bits.push('red mask');
+    }
     var ls = j.loras || [];
     for (var i = 0; i < ls.length; i++) bits.push('LoRA ' + ls[i].name + ' ' + round2(ls[i].multiplier));
     if (j.hires && j.hires.enabled) bits.push('hires ×' + round2(j.hires.scale));
@@ -158,12 +180,11 @@
       for (var k = 0; k < (loraList || []).length; k++) if (baseName(loraList[k].path) === ls[i].name) path = loraList[k].path;
       if (path) loras.push({ path: path, m: Number(ls[i].multiplier) || 0 }); else missing.push(ls[i].name);
     }
-    // Ref Boost and Ref Strength of a Krea2 edit, from the request's ref_image_args (Ref Strength
-    // from the starting noise it was sent as: 0.999 - 0.029 x Ref Strength).
-    var ra = String(j.ref_image_args || '');
-    var rb = /(?:^|,)ref_boost=([0-9.]+)/.exec(ra), es = /(?:^|,)edit_strength=([0-9.]+)/.exec(ra);
-    var refBoost = rb ? round2(rb[1]) : undefined;
-    var refKeep = rb ? (es ? round2(Math.max(0, Math.min(1, (0.999 - parseFloat(es[1])) / 0.029))) : 0) : undefined;
+    // Ref Boost and Ref Strength of a Krea2 edit. Ref Strength goes back to 0 for an image that
+    // has none, so a value left in the form does not quietly start the next edit from the photo.
+    var ri = refInfo(j);
+    var refBoost = ri ? ri.boost : undefined;
+    var refKeep = ri ? ri.keep : 0;
     $('prompt').value = j.prompt ? j.prompt.positive || '' : '';
     $('neg').value = j.prompt ? j.prompt.negative || '' : '';
     negShow(!!$('neg').value);
@@ -171,7 +192,7 @@
       w: j.width, h: j.height, steps: s.steps, cfg: round2(g.txt_cfg),
       sampler: s.method || 'default', scheduler: s.scheduler || 'default', clip: j.clip_skip, seed: j.seed, loras: loras,
       refBoost: refBoost !== undefined ? refBoost : num('ref-boost', 1, 0.01, 100),
-      refKeep: refKeep !== undefined ? refKeep : num('edit-strength', 0, 0, 1),
+      refKeep: refKeep,
       hr: hr && hr.enabled ? { on: true, up: hr.upscaler, scale: round2(hr.scale), steps: hr.steps, den: round2(hr.denoising_strength) } : null
     });
     if (j.video) {

@@ -1,0 +1,87 @@
+diff --git a/examples/common/generation_metadata.cpp b/examples/common/generation_metadata.cpp
+index 29e51c4..32edc4d 100644
+--- a/examples/common/generation_metadata.cpp
++++ b/examples/common/generation_metadata.cpp
+@@ -166,6 +166,9 @@ std::string generation_info_to_image_metadata(const std::string& info) {
+             std::snprintf(time, sizeof(time), "Time: %.1f s, ", extra.at("seconds").get<double>());
+             fields += time;
+         }
++        const auto build = extra.value("build", std::string());
++        if (!build.empty())
++            fields += "Build: " + build + ", ";
+         const auto at_version = parameters.rfind("Version: stable-diffusion.cpp");
+         if (at_version != std::string::npos)
+             parameters.insert(at_version, fields);
+diff --git a/examples/server/gallery.cpp b/examples/server/gallery.cpp
+index ccc56ba..fe7f295 100644
+--- a/examples/server/gallery.cpp
++++ b/examples/server/gallery.cpp
+@@ -150,11 +150,12 @@ static bool write_thumbnail(const fs::path& dir, const std::string& name, const
+     return !jpeg.empty() && write_whole(thumbs_dir(dir) / (name + ".jpg"), jpeg.data(), jpeg.size());
+ }
+ 
+-// Add the loaded preset and elapsed time to a copy of the result's generation-info JSON.
++// Add the loaded preset, the application's build and elapsed time to a copy of the result's generation-info JSON.
+ static std::string with_preset(const std::string& generation_info) {
+-    std::string name     = preset_name_now();
+-    const double seconds = sd_server_generation_seconds();
+-    if ((name.empty() && seconds < 0) || generation_info.empty()) {
++    std::string name        = preset_name_now();
++    std::string build       = app_build_now();
++    const double seconds    = sd_server_generation_seconds();
++    if ((name.empty() && build.empty() && seconds < 0) || generation_info.empty()) {
+         return generation_info;
+     }
+     for (char& c : name) {
+@@ -177,6 +178,14 @@ static std::string with_preset(const std::string& generation_info) {
+     if (seconds >= 0) {
+         extra["seconds"] = tenths;
+     }
++    for (char& c : build) {
++        if (c == ',' || c == '\n' || c == '\r') {
++            c = ' ';
++        }
++    }
++    if (!build.empty()) {
++        extra["build"] = build;
++    }
+     info["ps5sd"] = std::move(extra);
+     return info.dump(-1, ' ', false, json::error_handler_t::replace);
+ }
+diff --git a/examples/server/runtime.cpp b/examples/server/runtime.cpp
+index 3578cab..2df4423 100644
+--- a/examples/server/runtime.cpp
++++ b/examples/server/runtime.cpp
+@@ -660,6 +660,18 @@ std::string preset_name_now() {
+     return g_preset_extras.name;
+ }
+ 
++static std::string g_app_build;
++
++extern "C" void sd_server_set_app_build(const char* build) {
++    std::lock_guard<std::mutex> lock(g_request_defaults_mutex);
++    g_app_build = build != nullptr ? build : "";
++}
++
++std::string app_build_now() {
++    std::lock_guard<std::mutex> lock(g_request_defaults_mutex);
++    return g_app_build;
++}
++
+ bool request_is_temporary(const json& body) {
+     return body.is_object() && body.contains("temporary") && body["temporary"].is_boolean() &&
+            body["temporary"].get<bool>();
+diff --git a/examples/server/runtime.h b/examples/server/runtime.h
+index f1dea94..91e79ea 100644
+--- a/examples/server/runtime.h
++++ b/examples/server/runtime.h
+@@ -154,5 +154,9 @@ extern "C" void sd_server_set_preset_extras(int clip_skip, const char* prompt_st
+ void apply_preset_extras(const ServerRuntime& runtime, SDGenerationParams& params);
+ // The loaded preset's name, "" for none.
+ std::string preset_name_now();
++// PS5SD: the application's build ("build 0a92d8e"), set once at start; saved with each image as
++// "ps5sd": {"build"} and "Build: <it>" in its parameters. NULL or "" for none.
++extern "C" void sd_server_set_app_build(const char* build);
++std::string app_build_now();
+ // "temporary": true in a request body (img_gen, vid_gen).
+ bool request_is_temporary(const json& body);

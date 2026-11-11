@@ -152,6 +152,8 @@ void sd_server_set_request_defaults(int steps, float cfg, const char * sampler, 
 // (into each saved PNG); "" for none.
 void sd_server_set_preset_extras(int clip_skip, const char * prompt_starter, const char * negative_starter,
                                  const char * preset_name);
+// patches/sdcpp/0087 (runtime.h): this build ("build 0a92d8e"), saved with each image; "" for none.
+void sd_server_set_app_build(const char * build);
 }
 
 namespace {
@@ -1055,6 +1057,7 @@ bool write_active_model(const std::string & id) {
 // The entry's settings ("# defaults:") as the server's request defaults, set
 // at run time, so a switch needs no restart; nullptr clears them (standby).
 void apply_preset_settings(const ModelEntry * entry) {
+    sd_server_set_app_build(get_app_build().c_str());
     if (entry == nullptr) {
         sd_server_set_request_defaults(-1, -1, "", "", -1, -1);
         sd_server_set_preset_extras(-1, "", "", "");
