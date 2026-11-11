@@ -203,6 +203,7 @@
     if ($('gsel-telegram')) $('gsel-telegram').onclick = sendSelectedToTelegram;
     $('gsel-del').onclick = askDeleteSelected;
     $('lb-use').onclick = useSettings;
+    $('lb-mask').onclick = useMask;
     $('prompt-copy').onclick = function () { copyText($('prompt').value, 'The prompt'); };
     $('neg-copy').onclick = function () { copyText($('neg').value, 'The negative prompt'); };
     show('prompt-paste', canPaste(), 'inline-block');

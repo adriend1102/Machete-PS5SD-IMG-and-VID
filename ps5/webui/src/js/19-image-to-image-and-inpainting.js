@@ -45,7 +45,11 @@
       setView('create');
       setMode('edit');
       drawInit();
-      toast('Start image set; the size is ' + f.w + '×' + f.h + ' now. Paint a mask to change only a part of it.', 6000);
+      // masks asked for with "Use its mask" or "Use these settings" before a start image was loaded
+      var pending = st.pendingMasks;
+      st.pendingMasks = null;
+      toast('Start image set; the size is ' + f.w + '×' + f.h + ' now.' +
+        (pending ? restoreMasks(pending) : ' Paint a mask to change only a part of it.'), 6000);
     };
     img.onerror = function () { toast('Could not read that image.', 6000); };
     img.src = src;
@@ -537,7 +541,9 @@
     var grid = /(?:^|,)ref_boost_mask=(\d+)x(\d+):([0-9a-f]+)/.exec(String(j.ref_image_args || ''));
     if (!mm && !grid) return '';
     var i = st.init;
-    if (!i) return ' Its mask comes back when the same photo is loaded with Edit first.';
+    // No start image yet: the masks wait for the next one (Edit on the same photo).
+    if (!i) { st.pendingMasks = j; return ' Its mask goes on the next start image: press Edit on the same photo (or Start from an image).'; }
+    st.pendingMasks = null;
     var W = i.canvas.width, H = i.canvas.height;
     function painted(c) {
       var a = c.getContext('2d').getImageData(0, 0, c.width, c.height).data, n = 0, on = 0;

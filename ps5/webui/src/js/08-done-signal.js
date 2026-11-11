@@ -138,6 +138,15 @@
       putBack(rq, images, function (out) { st.editParams = params; succeed(out, seed, true); });
       return;
     }
+    // An edit with masks that is not put back (a green face area only): the server's pictures are
+    // saved again with the masks in their settings, so "Use its mask" brings them back.
+    if (rq && !edited && rq.layers && (rq.layers.mask || rq.layers.boost) && !(st.run && st.run.server)) {
+      var kept = [];
+      for (var q = 0; q < images.length; q++) kept.push(withMasks(pngParameters(images[q]), rq.layers));
+      st.editParams = kept;
+      succeed(images, seed, true);
+      return;
+    }
     var seconds = (new Date().getTime() - st.t0) / 1000;
     var results = [];
     var first = parseInt(seed, 10);

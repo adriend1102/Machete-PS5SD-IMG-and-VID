@@ -51,6 +51,27 @@
     };
   }
 
+  // An edit whose masks were kept: the red and green layers (machete_masks), or the green as the
+  // Ref Boost grid of its request.
+  function hasMasks(j) {
+    var mm = j.machete_masks;
+    return !!(mm && (mm.mask || mm.boost)) || /(?:^|,)ref_boost_mask=/.test(String(j.ref_image_args || ''));
+  }
+
+  // "Use its mask": only the masks of the image in the viewer, onto the start image in the Create
+  // tab; with none loaded yet, onto the next one (Edit on the same photo, or Start from an image).
+  function useMask() {
+    var it = lbItem();
+    var d = it ? infoCache[it.name] : null;
+    var j = d && d.sdcpp;
+    if (!j || !hasMasks(j)) return;
+    var msg = restoreMasks(j);
+    closeLb();
+    setView('create');
+    if (st.init) setMode('edit');
+    toast(msg.replace(/^ /, '') || 'Its mask is back on the start image.', 7000);
+  }
+
   // One line: build · model · size · steps · CFG · sampler · seed · Ref Boost · LoRAs · hires · frames.
   function settingsLine(j) {
     var s = j.sampling || {}, g = s.guidance || {}, bits = [];
@@ -105,6 +126,7 @@
     show('lb-text', has);
     show('lb-copy', has, 'flex');
     show('lb-use', !!j, 'inline-block');
+    show('lb-mask', !!(j && hasMasks(j)), 'inline-block');
     if (!has) return;
     var neg = j && j.prompt ? j.prompt.negative || '' : '';
     text($('lb-prompt'), j && j.prompt ? j.prompt.positive : data.prompt);
