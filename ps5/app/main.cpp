@@ -167,6 +167,9 @@ constexpr const char * kHomebrewCrashLog= "/data/homebrew/PPSA99699/crash.log";
 // The storage a relaunch for a model switch left from (a USB drive is not the
 // default), read once by the next start.
 constexpr const char * kRelaunchBase    = "/data/homebrew/PS5SD-relaunch-base.txt";
+// The storage last chosen in the web UI (its PS5SD folder), so a cold start opens on it again
+// (the USB drive) when it is there; the console's own storage otherwise.
+constexpr const char * kStorageChoice   = "/data/homebrew/PS5SD-storage.txt";
 constexpr const char * kDocs            = "/app0/docs";  // the Help tab's docs (scripts/build-app.sh)
 #ifndef PS5SD_NO_DISPLAY
 constexpr const char * kFont    = "/app0/assets/fonts/dejavu-sans-mono.huifont";
@@ -2037,9 +2040,22 @@ extern "C" int sd_app_request(const char * method, const char * path, const char
         const nlohmann::json j = nlohmann::json::parse(body != nullptr ? std::string(body, body_len) : std::string(), nullptr, false);
         std::string mount = j.is_object() && j.contains("mount") && j["mount"].is_string() ? j["mount"].get<std::string>() : "";
         std::string err;
+        const std::string before = StorageManager::instance().base_dir();
         if (StorageManager::instance().set_active_storage(mount, err)) {
             update_storage_paths();
-            out    = nlohmann::json{ { "ok", true }, { "base_dir", StorageManager::instance().base_dir() } }.dump();
+            {
+                std::ofstream choice(kStorageChoice, std::ios::trunc);
+                choice << StorageManager::instance().base_dir() << "\n";
+            }
+            // The downloader, the server and the gallery were set up for the old storage: PS5SD
+            // starts again on the new one (its model.txt, presets and creations).
+            const bool moved = StorageManager::instance().base_dir() != before;
+            if (moved) {
+                std::printf("ps5sd: storage %s -> %s: relaunching PS5SD\n", before.c_str(), StorageManager::instance().base_dir().c_str());
+                set_phase("Changing the storage", "PS5SD restarts on it");
+                g_relaunch = true;
+            }
+            out    = nlohmann::json{ { "ok", true }, { "base_dir", StorageManager::instance().base_dir() }, { "relaunch", moved } }.dump();
             status = 200;
         } else {
             out    = error_json(err);
@@ -2604,6 +2620,12 @@ int main(int, char **) {
         struct stat st;
         if (!relaunch.empty() && !relaunch[0].empty() && stat(relaunch[0].c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
             StorageManager::instance().init(relaunch[0]);
+        } else {
+            const auto choice = read_lines(kStorageChoice);
+            if (!choice.empty() && !choice[0].empty() && stat(choice[0].c_str(), &st) == 0 && S_ISDIR(st.st_mode)) {
+                std::printf("ps5sd: opening on the storage chosen last: %s\n", choice[0].c_str());
+                StorageManager::instance().init(choice[0]);
+            }
         }
     }
     update_storage_paths();
