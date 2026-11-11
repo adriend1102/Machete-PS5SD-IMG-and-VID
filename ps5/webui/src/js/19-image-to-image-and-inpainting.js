@@ -103,7 +103,7 @@
       }
       $('init-thumb').src = t.toDataURL('image/png');
       text($('init-meta'), i.canvas.width + '×' + i.canvas.height + ' · ' + (ref && i.mask && refMaskable()
-        ? 'a reference, ' + Math.max(1, Math.round(i.painted * 100)) + '% masked: only that part is edited'
+        ? 'a reference, ' + Math.max(1, Math.round(i.painted * 100)) + '% masked: only that part is edited (with Ref Strength above 0)'
         : ref
         ? 'a reference: the prompt says what changes'
         : i.mask ? Math.max(1, Math.round(i.painted * 100)) + '% masked: only that part changes'
@@ -118,7 +118,7 @@
         : 'Paint the face (Ref Boost)');
       show('init-crop-row', !!i.mask && !ref, 'flex');
       text($('init-hint'), ref && i.mask && refMaskable()
-        ? 'Only the painted part is edited; the rest of the photo stays exactly as it is. Say what to change there, for example "a red bikini".'
+        ? 'With Ref Strength above 0 only the painted part is edited and the rest of the photo stays exactly as it is; at 0 the masks are not used (a full redraw). Say what to change there, for example "a red bikini".'
         : ref
         ? 'Say what to change, for example "the same house in winter, snow on the roof". The layout and the rest stay. ' +
           'It takes longer than an image of its own: about a minute at 4 steps, two at 8.'
@@ -511,6 +511,10 @@
     var out = { init: ic.toDataURL('image/png'), mask: null, soft: null, w: gw, h: gh, box: box, crop: crop, source: i.canvas, ref: ref,
       sourceUrl: crop ? i.canvas.toDataURL('image/png') : null, srcW: W, srcH: H,
       layers: { mask: smallLayer(i.mask), boost: ref ? smallLayer(i.boost) : null } };
+    // A Krea2 edit at Ref Strength 0 is a redraw exactly as in 8428f19: the reference and Ref Boost
+    // only, no mask of either colour, nothing laid back over the photo. The masks stay on the start
+    // image and work again as soon as Ref Strength is above 0.
+    if (ref && refMaskable() && !(f.refKeep > 0)) { out.layers = null; return out; }
     if (ref && i.boost && refMaskable()) out.boostGrid = boostGrid(i.boost, box, gw, gh);
     // A red mask without a green one: Ref Boost pulls only toward the part of the photo that is
     // kept, not toward what the red part replaces (pulled back to the old content, the new one

@@ -134,8 +134,9 @@
         // as a patch that did not fit (seams, grey smudges); Krea2 edits the whole picture instead
         // and only its red part is laid over the photo (putBack, soft edge).
         if (p.req.mask && p.refKeep > 0) body.mask_image = p.req.mask;
-        // Painted Ref Boost area: the boost applies there only (none painted: everywhere).
-        if (p.req.boostGrid) body.ref_image_args += ',ref_boost_mask=' + p.req.boostGrid;
+        // Painted Ref Boost area: the boost applies there only (none painted: everywhere). At Ref
+        // Strength 0 initRequest leaves both masks out (the request of 8428f19).
+        if (p.req.boostGrid && p.refKeep > 0) body.ref_image_args += ',ref_boost_mask=' + p.req.boostGrid;
       }
       body.width = p.req.w;
       body.height = p.req.h;
