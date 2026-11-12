@@ -71,8 +71,9 @@
     r.readAsDataURL(f);
   }
 
-  // FLUX.2, Krea2 and Qwen Image Edit edits by the prompt use the start image as a reference.
-  function refCapable() { return /^FLUX\.2|^Krea2|^Qwen Image/.test(loadedFamily()); }
+  // The models that edit by the prompt, with the start image as a reference (their engine takes
+  // ref_images): FLUX.2, FLUX.3 Klein, Krea2 and Qwen Image Edit.
+  function refCapable() { return /^FLUX\.[23]|^Krea2|^Qwen Image/.test(loadedFamily()); }
   function refEdit() { return !!st.init && refCapable() && $('init-ref').checked; }
   // A Krea2 edit by the prompt can take a mask too: only the painted part is edited, the rest
   // of the photo stays as it is (the edit starts from the photo, see imageBody).

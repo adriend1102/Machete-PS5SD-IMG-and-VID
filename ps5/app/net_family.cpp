@@ -230,7 +230,7 @@ bool read_net_tensors(const std::string & path, std::vector<NetTensor> & out) {
 
 std::string net_family_of(const std::vector<NetTensor> & tensors) {
     int     flux_double = 0, flux_single = 0;  // the highest block index + 1
-    bool    flux3 = false, bfl_double = false, sd3 = false, wan = false, zimage = false, unet = false;
+    bool    flux3 = false, bfl_double = false, sd3 = false, wan = false, zimage = false, unet = false, qwen = false;
     int64_t hidden = 0, mlp = 0, linear1 = 0, wan_dim = 0, context = 0;
     for (const NetTensor & t : tensors) {
         const Key key = key_of(t.name);
@@ -242,6 +242,18 @@ std::string net_family_of(const std::vector<NetTensor> & tensors) {
         if (k.find("content.mode.blocks") != std::string::npos || k.find("txt.mode.blocks") != std::string::npos ||
             ends(after_index(k, "single.blocks."), "mlp.in")) {
             flux3 = true;
+        }
+        // Qwen Image (and its Edit models): transformer_blocks with img_mod / img_mlp / txt_mlp, and
+        // txt_norm; FLUX names its double blocks' MLP and modulation differently (img_mlp only in
+        // BFL's double_blocks, ff / norm1 in diffusers' transformer_blocks).
+        if (k == "txt.norm" || starts(k, "txt.norm.")) {
+            qwen = true;
+        }
+        if (index_after(k, "transformer.blocks.") >= 0) {
+            const std::string qrest = after_index(k, "transformer.blocks.");
+            if (starts(qrest, "img.mod") || starts(qrest, "img.mlp") || starts(qrest, "txt.mlp")) {
+                qwen = true;
+            }
         }
         if (!(rest = after_index(k, "double.blocks.")).empty() || !(rest = after_index(k, "transformer.blocks.")).empty()) {
             bfl_double  = bfl_double || index_after(k, "double.blocks.") >= 0;
@@ -282,6 +294,9 @@ std::string net_family_of(const std::vector<NetTensor> & tensors) {
 
     if (flux3) {
         return "FLUX.3 Klein";
+    }
+    if (qwen) {
+        return "Qwen Image";
     }
     // diffusers' transformer_blocks alone are SD 3 as well: FLUX only with single blocks or FLUX.1's width
     if (flux_single || bfl_double || (flux_double && hidden == 3072)) {
