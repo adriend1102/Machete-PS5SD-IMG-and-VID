@@ -189,12 +189,19 @@
     }, 10000);
   }
 
+  // A 409 says why nothing new starts: downloading or queued already, or the file is in the
+  // folder already (then there is nothing to wait for), in the server's own words.
+  function conflictText(data) {
+    var e = data && data.error ? String(data.error) : '';
+    return e ? e.charAt(0).toUpperCase() + e.slice(1) + '.' : 'Already downloading.';
+  }
+
   // A failed or cancelled download again: POST downloads/<id>/retry resumes it.
   function retryDl(d, b) {
     if (b) { b.disabled = true; text(b, 'Retrying…'); }
     req('POST', APP + '/downloads/' + encodeURIComponent(String(d.id)) + '/retry', {}, function (code, data) {
       if (code === 202 || code === 200 || code === 409) {
-        toast(code === 409 ? 'Already downloading.' : 'Downloading ' + dlName(d.url, d.dest) + ' (see Downloads).');
+        toast(code === 409 ? conflictText(data) : 'Downloading ' + dlName(d.url, d.dest) + ' (see Downloads).', code === 409 ? 7000 : undefined);
       } else {
         if (absent(code)) { st.dl = false; drawPanels(); }
         if (b) { b.disabled = false; text(b, 'Retry'); }
@@ -229,7 +236,7 @@
         text(b, ok && sticky ? 'Queued' : 'Download');
       }
       if (ok) {
-        toast(code === 409 ? 'Already downloading.' : 'Downloading ' + dlName(url) + ' (see Downloads).');
+        toast(code === 409 ? conflictText(data) : 'Downloading ' + dlName(url) + ' (see Downloads).', code === 409 ? 7000 : undefined);
         dlSchedule(0);
       } else {
         if (absent(code)) { st.dl = false; drawPanels(); }

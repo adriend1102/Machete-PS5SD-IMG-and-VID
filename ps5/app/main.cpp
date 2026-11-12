@@ -1663,6 +1663,53 @@ bool switch_companion_model(const std::string & input_id, std::string & error) {
     return false;
 }
 
+// The prompt of a creation made before this start (the gallery scan has none for it): the text
+// of its PNG's "parameters" chunk before "Negative prompt:", or before its last line (the
+// settings) when it has no negative prompt. "" when there is none.
+std::string png_prompt(const std::string & path) {
+    std::ifstream in(path, std::ios::binary);
+    char          sig[8];
+    if (!in.read(sig, 8) || std::memcmp(sig, "\x89PNG\r\n\x1a\n", 8) != 0) {
+        return {};
+    }
+    for (int n = 0; n < 64; n++) {
+        unsigned char head[8];
+        if (!in.read(reinterpret_cast<char *>(head), 8)) {
+            return {};
+        }
+        const uint32_t len = (uint32_t) head[0] << 24 | (uint32_t) head[1] << 16 | (uint32_t) head[2] << 8 | head[3];
+        const char *   type = reinterpret_cast<const char *>(head + 4);
+        if (std::memcmp(type, "IDAT", 4) == 0 || std::memcmp(type, "IEND", 4) == 0) {
+            return {};
+        }
+        if (std::memcmp(type, "tEXt", 4) == 0 && len < (8u << 20)) {
+            std::string body(len, '\0');
+            if (len > 0 && !in.read(&body[0], len)) {
+                return {};
+            }
+            in.seekg(4, std::ios::cur);  // CRC
+            const size_t zero = body.find('\0');
+            if (zero == std::string::npos || body.compare(0, zero, "parameters") != 0) {
+                continue;
+            }
+            std::string text = body.substr(zero + 1);
+            size_t      end  = text.find("\nNegative prompt:");
+            if (end == std::string::npos) {
+                end = text.rfind('\n');
+            }
+            if (end != std::string::npos) {
+                text.resize(end);
+            }
+            while (!text.empty() && std::isspace((unsigned char) text.back())) {
+                text.pop_back();
+            }
+            return text;
+        }
+        in.seekg((std::streamoff) len + 4, std::ios::cur);
+    }
+    return {};
+}
+
 std::string companion_generate(const std::string & prompt, const CompanionParams & params, std::string & error) {
     std::string active = loaded_id();
     if (active.empty()) {
@@ -2830,6 +2877,10 @@ int main(int, char **) {
                         if (cur_snap.state != AppStatus::State::generating) {
                             pad.rumble(0.6f, 0.2f);
                             std::string p = view.current_picture_prompt();
+                            if (p.empty()) {
+                                // a creation from before this start: the prompt kept in its PNG
+                                p = png_prompt(view.current_picture_path());
+                            }
                             if (p.empty()) {
                                 p = "A cinematic masterpiece, highly detailed digital art";
                             }
