@@ -71,6 +71,7 @@
   // The family of a model, guessed from the names (then the files) of it and its base file.
   function familyWord(s) {
     if (/krea\s*2|krea2/.test(s)) return 'Krea2';
+    if (/qwen[-_ ]?(image|edit)/.test(s)) return 'Qwen Image';
     if (/flux/.test(s)) return 'FLUX';
     if (/z[-_ ]?image/.test(s)) return 'Z-Image';
     if (/wan/.test(s)) return 'Wan';
