@@ -2689,6 +2689,9 @@ int main(int, char **) {
     // (the start of every error line). The file is emptied first instead.
     // Dual-location logging: ensure both active app.log and
     // /data/homebrew/PPSA99699/app.log capture identical application logs.
+    // The last start's log is kept as app.prev.log: when a start (a relaunch for a model switch)
+    // ended in a crash, the next one would otherwise wipe what it wrote.
+    std::rename(kLog.c_str(), (kLog + ".prev").c_str());
     if (std::FILE * log = std::fopen(kLog.c_str(), "w")) {
         std::fclose(log);
     }
